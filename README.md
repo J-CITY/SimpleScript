@@ -1,0 +1,2 @@
+# SimpleScript
+Simple script
