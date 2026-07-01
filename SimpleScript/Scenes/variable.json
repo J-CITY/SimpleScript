@@ -1,0 +1,157 @@
+{
+    "links": [
+        {
+            "end": 9,
+            "id": 12,
+            "start": 11
+        },
+        {
+            "end": 8,
+            "id": 13,
+            "start": 4
+        },
+        {
+            "end": 7,
+            "id": 14,
+            "start": 2
+        }
+    ],
+    "nodes": [
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 1,
+            "inputs": null,
+            "name": "StartNode",
+            "outputs": [
+                {
+                    "id": 2,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": -802.0,
+                "y": -101.0
+            },
+            "type": 28
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 3,
+            "inputs": null,
+            "name": "Variable",
+            "outputs": [
+                {
+                    "id": 4,
+                    "name": "",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                }
+            ],
+            "pos": {
+                "x": -706.0,
+                "y": -12.0
+            },
+            "type": 10,
+            "value": "a"
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 5,
+            "inputs": [
+                {
+                    "id": 7,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 8,
+                    "name": "Var",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                },
+                {
+                    "id": 9,
+                    "name": "Val",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "name": "=",
+            "outputs": [
+                {
+                    "id": 6,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": -312.0,
+                "y": -149.0
+            },
+            "type": 12
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 10,
+            "inputs": null,
+            "name": "Int",
+            "outputs": [
+                {
+                    "id": 11,
+                    "name": "",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "pos": {
+                "x": -626.0,
+                "y": 132.0
+            },
+            "type": 0,
+            "value": 3
+        }
+    ]
+}

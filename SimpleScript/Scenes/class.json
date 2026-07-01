@@ -1,0 +1,117 @@
+{
+    "links": [
+        {
+            "end": 8,
+            "id": 12,
+            "start": 11
+        },
+        {
+            "end": 9,
+            "id": 13,
+            "start": 11
+        }
+    ],
+    "nodes": [
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 1,
+            "inputs": null,
+            "name": "StartNode",
+            "outputs": [
+                {
+                    "id": 2,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": -1042.0,
+                "y": -293.0
+            },
+            "type": 28
+        },
+        {
+            "className": "Point",
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 7,
+            "inputVars": [
+                {
+                    "id": 8,
+                    "name": "x",
+                    "type": {
+                        "type": 3
+                    }
+                },
+                {
+                    "id": 9,
+                    "name": "y",
+                    "type": {
+                        "type": 3
+                    }
+                }
+            ],
+            "inputs": [
+                {
+                    "id": 8,
+                    "name": "x",
+                    "type": {
+                        "type": 3
+                    }
+                },
+                {
+                    "id": 9,
+                    "name": "y",
+                    "type": {
+                        "type": 3
+                    }
+                }
+            ],
+            "memberVars": null,
+            "name": "Class",
+            "outputs": null,
+            "pos": {
+                "x": -848.0,
+                "y": -512.0
+            },
+            "type": 15
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 10,
+            "inputs": null,
+            "name": "Float",
+            "outputs": [
+                {
+                    "id": 11,
+                    "name": "",
+                    "type": {
+                        "type": 3
+                    }
+                }
+            ],
+            "pos": {
+                "x": -1154.0,
+                "y": -524.0
+            },
+            "type": 1,
+            "value": 0.0
+        }
+    ]
+}

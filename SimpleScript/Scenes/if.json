@@ -1,0 +1,472 @@
+{
+    "links": [
+        {
+            "end": 17,
+            "id": 21,
+            "start": 20
+        },
+        {
+            "end": 18,
+            "id": 22,
+            "start": 20
+        },
+        {
+            "end": 8,
+            "id": 23,
+            "start": 16
+        },
+        {
+            "end": 7,
+            "id": 24,
+            "start": 2
+        },
+        {
+            "end": 37,
+            "id": 40,
+            "start": 4
+        },
+        {
+            "end": 27,
+            "id": 41,
+            "start": 5
+        },
+        {
+            "end": 32,
+            "id": 42,
+            "start": 6
+        },
+        {
+            "end": 34,
+            "id": 43,
+            "start": 20
+        },
+        {
+            "end": 29,
+            "id": 44,
+            "start": 20
+        },
+        {
+            "end": 39,
+            "id": 45,
+            "start": 20
+        },
+        {
+            "end": 38,
+            "id": 46,
+            "start": 12
+        },
+        {
+            "end": 28,
+            "id": 47,
+            "start": 10
+        },
+        {
+            "end": 33,
+            "id": 48,
+            "start": 14
+        }
+    ],
+    "nodes": [
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 1,
+            "inputs": null,
+            "name": "StartNode",
+            "outputs": [
+                {
+                    "id": 2,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": -834.0,
+                "y": -101.0
+            },
+            "type": 28
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 3,
+            "inputs": [
+                {
+                    "id": 7,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 8,
+                    "name": "Cond",
+                    "type": {
+                        "type": 1
+                    }
+                }
+            ],
+            "name": "IfElse",
+            "outputs": [
+                {
+                    "id": 4,
+                    "name": "True",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 5,
+                    "name": "False",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 6,
+                    "name": "Complete",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": -344.0,
+                "y": -93.0
+            },
+            "type": 18
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 9,
+            "inputs": null,
+            "name": "Variable",
+            "outputs": [
+                {
+                    "id": 10,
+                    "name": "",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                }
+            ],
+            "pos": {
+                "x": -578.0,
+                "y": 180.0
+            },
+            "type": 10,
+            "value": "c"
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 11,
+            "inputs": null,
+            "name": "Variable",
+            "outputs": [
+                {
+                    "id": 12,
+                    "name": "",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                }
+            ],
+            "pos": {
+                "x": -338.0,
+                "y": 100.0
+            },
+            "type": 10,
+            "value": "b"
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 13,
+            "inputs": null,
+            "name": "Variable",
+            "outputs": [
+                {
+                    "id": 14,
+                    "name": "",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                }
+            ],
+            "pos": {
+                "x": -306.0,
+                "y": 228.0
+            },
+            "type": 10,
+            "value": "a"
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 15,
+            "inputs": [
+                {
+                    "id": 17,
+                    "name": "1",
+                    "type": {
+                        "type": 2
+                    }
+                },
+                {
+                    "id": 18,
+                    "name": "2",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "name": "==",
+            "opType": 9,
+            "outputs": [
+                {
+                    "id": 16,
+                    "name": "Result",
+                    "type": {
+                        "type": 1
+                    }
+                }
+            ],
+            "pos": {
+                "x": -600.0,
+                "y": 11.0
+            },
+            "type": 11
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 19,
+            "inputs": null,
+            "name": "Int",
+            "outputs": [
+                {
+                    "id": 20,
+                    "name": "",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "pos": {
+                "x": -850.0,
+                "y": 68.0
+            },
+            "type": 0,
+            "value": 1
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 25,
+            "inputs": [
+                {
+                    "id": 27,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 28,
+                    "name": "Var",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                },
+                {
+                    "id": 29,
+                    "name": "Val",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "name": "=",
+            "outputs": [
+                {
+                    "id": 26,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": 0.0,
+                "y": 0.0
+            },
+            "type": 12
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 30,
+            "inputs": [
+                {
+                    "id": 32,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 33,
+                    "name": "Var",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                },
+                {
+                    "id": 34,
+                    "name": "Val",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "name": "=",
+            "outputs": [
+                {
+                    "id": 31,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": 14.0,
+                "y": 155.0
+            },
+            "type": 12
+        },
+        {
+            "color": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "id": 35,
+            "inputs": [
+                {
+                    "id": 37,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                },
+                {
+                    "id": 38,
+                    "name": "Var",
+                    "type": {
+                        "subtype": {
+                            "type": {
+                                "type": "int",
+                                "val": 2
+                            }
+                        },
+                        "type": 14
+                    }
+                },
+                {
+                    "id": 39,
+                    "name": "Val",
+                    "type": {
+                        "type": 2
+                    }
+                }
+            ],
+            "name": "=",
+            "outputs": [
+                {
+                    "id": 36,
+                    "name": "",
+                    "type": {
+                        "type": 15
+                    }
+                }
+            ],
+            "pos": {
+                "x": 14.0,
+                "y": -173.0
+            },
+            "type": 12
+        }
+    ]
+}

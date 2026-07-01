@@ -1,0 +1,2440 @@
+
+#include <fstream>
+#include "parser.h"
+
+#include "ikigaiScript.h"
+
+#include <iostream>
+#include <map>
+#include <set>
+#include <stack>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "exception.h"
+#include "expressions.hpp"
+#include "lexer.h"
+
+using namespace IkigaiScript;
+
+namespace IkigaiScript {
+
+bool isContainer(Type type) {
+	const static std::set<Type> containers = { Type::Array, Type::List, Type::Set, Type::Map };
+	return containers.contains(type);
+};
+
+bool checkNext(const std::vector<std::string_view>& vec, std::string_view expect) {
+	if (!vec.empty() && vec.front() == expect) {
+		return true;
+	}
+	return false;
+};
+bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
+	if (!vec.empty() && vec.front() == expect) {
+		vec.erase(vec.begin());
+		return true;
+	}
+	throw;
+}
+
+bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
+	std::cout << "checkConvertTypes t1=" << (int)t1.type << " t2=" << (int)t2.type << " t1.isInit=" << t1.isInit << " t1.isDynamic=" << t1.isDynamic << std::endl;
+	if (!t1.isInit && t1.isDynamic) {
+		std::cout << "checkConvertTypes dyn" << std::endl;
+		return true;
+	}
+
+	if (t1.type == Type::Float && (t2.type == Type::Int || t2.type == Type::Bool)) {
+		std::cout << "checkConvertTypes float" << std::endl;
+		return true;
+	}
+	if (t1.type == Type::Int && t2.type == Type::Bool) {
+		std::cout << "checkConvertTypes int/bool" << std::endl;
+		return true;
+	}
+
+	if (t1.isNullable && t2.type == Type::Null) {
+		std::cout << "checkConvertTypes null" << std::endl;
+		return true;
+	}
+
+	auto res = t1.type == t2.type;
+	std::cout << "checkConvertTypes res=" << res << std::endl;
+
+	//class check
+	if (t1.type == Type::Class && res) {
+		std::cout << "checkConvertTypes class" << std::endl;
+		auto& className1 = std::get<std::string>(t1.subtype.value());
+		auto& className2 = std::get<std::string>(t2.subtype.value());
+		if (className1.empty() || className2.empty()) {
+			throw;
+		}
+		if (className1 == className2) {
+			return true;
+		}
+		return false;
+	}
+
+	//containers check
+	if (res && isContainer(t1.type)) {
+		std::cout << "checkConvertTypes container" << std::endl;
+		//same container with dynamic content
+		if (!t1.subtype && !t2.subtype) {
+			return true;
+		}
+		bool b = true;
+		if (t1.type == Type::Map) {
+			std::cout << "checkConvertTypes map" << std::endl;
+			if (!t1.subtype2.has_value() || !t2.subtype2.has_value()) {
+				std::cout << "checkConvertTypes CRASH AVERTED!" << std::endl;
+				return false;
+			}
+			checkConvertTypes(*t1.subtype2.value(), *t2.subtype2.value());
+		}
+		if (!t1.subtype.has_value() || !t2.subtype.has_value()) {
+			std::cout << "checkConvertTypes CRASH AVERTED 2!" << std::endl;
+			return false;
+		}
+		return b && checkConvertTypes(*std::get<std::shared_ptr<TypeDescriptor>>(t1.subtype.value()), *std::get<std::shared_ptr<TypeDescriptor>>(t2.subtype.value()));
+	}
+	std::cout << "checkConvertTypes returning " << res << std::endl;
+	return res;
+}
+
+
+
+// functions for figuring out the type of token
+
+bool isStringLiteral(std::string_view token) {
+	return (token.size() > 1 && token.front() == '\"' && token.back() == '\"');
+}
+
+bool isCharLiteral(std::string_view token) {
+	return (token.size() > 1 && token.front() == '\'' && token.back() == '\'');
+}
+
+bool isFloatLiteral(std::string_view token) {
+	return (token.size() > 1 && contains(token, '.'));
+}
+
+bool isBinaryLiteral(std::string_view token) {
+	return (token.size() > 1 && (contains(token, 'b') || contains(token, 'B')));
+}
+
+bool isHexLiteral(std::string_view token) {
+	return (token.size() > 1 && (contains(token, 'x') || contains(token, 'X')));
+}
+
+bool isVarOrFuncToken(std::string_view test) {
+	return (test.size() > 0 && !contains(DisallowedIdentifierStartChars, test[0]));
+}
+
+bool isNumeric(std::string_view test) {
+	if (test.size() > 1 && test[0] == '-') contains(NumStartChars, test[1]);
+	return (test.size() > 0 && contains(NumStartChars, test[0]));
+}
+
+bool isMathOperator(std::string_view test) {
+	if (test.size() == 1) {
+		return contains("+-*/%<>=!"s, test[0]);
+	}
+	if (test.size() == 2) {
+		return contains(MultiCharTokenStartChars, test[0]) && contains("=+-&|"s, test[1]);
+	}
+	return false;
+}
+
+bool isUnaryMathOperator(std::string_view test) {
+	if (test.size() == 1) {
+		return '!' == test[0];
+	}
+	if (test.size() == 2) {
+		return contains("+-"s, test[1]) && test[1] == test[0];
+	}
+	return false;
+}
+
+bool isMemberCall(std::string_view test) {
+	if (test.size() == 1) {
+		return '.' == test[0] || '?' == test[0];
+	}
+	return false;
+}
+
+bool isOpeningBracketOrParen(std::string_view test) {
+	return (test.size() == 1 && (test[0] == '[' || test[0] == '('));
+}
+
+bool isClosingBracketOrParen(std::string_view test) {
+	return (test.size() == 1 && (test[0] == ']' || test[0] == ')'));
+}
+
+} // namespace IkigaiScript
+
+void IkigaiScriptInterpreter::createOptionalModules() {
+	newModule("file", ModulePrivilege::fileSystemRead | ModulePrivilege::fileSystemWrite, {
+		{ "saveFile", [](const List& args) {
+			if (args.size() == 2
+				&& args[0]->getType() == Type::String
+				&& args[1]->getType() == Type::String
+				) {
+				auto t = std::ofstream(args[1]->getString(), std::ofstream::out);
+				t << args[0]->getString();
+				t.flush();
+				return std::make_shared<Value>(true);
+			}
+			return std::make_shared<Value>(false);
+		}},
+		{ "readFile", [](const List& args) {
+			if (args.size() == 1 && args[0]->getType() == Type::String) {
+				std::stringstream buffer;
+				buffer << std::ifstream(args[0]->getString()).rdbuf();
+				return make_shared<Value>(buffer.str());
+			}
+			return std::make_shared<Value>();
+		}},
+		});
+
+	newModule("thread", ModulePrivilege::fileSystemRead | ModulePrivilege::experimental, {
+		{ "newThread", [this](const List& args) {
+			if (args.size() == 1 && args[0]->getType() == Type::Function) {
+				auto func = args[0]->getFunction();
+				auto ptr = new std::thread([this, func]() {
+					callFunction(func, {});
+				});
+				return make_shared<Value>(ptr);
+			}
+			return std::make_shared<Value>();
+		}},
+		{ "joinThread", [](const List& args) {
+			if (args.size() == 1 && args[0]->getType() == Type::Pointer) {
+				std::thread* ptr = (std::thread*)args[0]->getPointer();
+				ptr->join();
+				delete ptr;
+			}
+			return std::make_shared<Value>();
+		}},
+		});
+}
+
+ScopePtr IkigaiScriptInterpreter::newModule(const std::string& name, ModulePrivilegeFlags flags, const std::unordered_map<std::string, Lambda>& functions) {
+	auto& modSource = flags ? optionalModules : modules;
+	modSource.emplace_back(flags, std::make_shared<Scope>(name, this));
+	auto scope = modSource.back().scope;
+
+	for (auto& funcPair : functions) {
+		newFunction(funcPair.first, scope, funcPair.second);
+	}
+
+	return modSource.back().scope;
+}
+
+Module* IkigaiScriptInterpreter::getOptionalModule(const std::string& name) {
+	auto iter = std::find_if(optionalModules.begin(), optionalModules.end(), [&name](const auto& mod) {return mod.scope->name == name; });
+	if (iter != optionalModules.end()) {
+		return &*iter;
+	}
+	return nullptr;
+}
+
+
+void IkigaiScriptInterpreter::createStandardLibrary() {
+	newModule("StandardLib"s, 0, {
+		{"=", [this](const List& args) {
+			std::cout << "ASSIGNMENT EVALUATION START" << std::endl;
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("=");
+			}
+			//if (args[0]->typeDescriptor.isConst && args[0]->typeDescriptor.isInit) {
+			//	throw Exception("Try assign to const value");
+			//}
+			//TODO:
+			//if (!args[0]->typeDescriptor.isNullable && args[1]->typeDescriptor.type == Type::Null) {
+			//	throw Exception("Can not assign null to variable");
+			//}
+			std::cout << "ASSIGNMENT EVALUATION CHECK 1" << std::endl;
+			if (!args[1]->typeDescriptor.isInit) {
+				throw Exception("Use not init variable in expression");
+			}
+			std::cout << "ASSIGNMENT EVALUATION CHECK 2" << std::endl;
+			if (!checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor)) {
+				throw Exception("Cannot convert types");
+			}
+			std::cout << "ASSIGNMENT EVALUATION DOING COPY" << std::endl;
+			*args[0] = *args[1];
+			std::cout << "ASSIGNMENT EVALUATION DONE COPY" << std::endl;
+			return args[0];
+		}},
+
+		{"+", [this](const List& args) {
+			if (args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 1) {
+				auto zero = Value(Int(0));
+				upconvert(*args[0], zero);
+				return std::make_shared<Value>(zero + *args[0]);
+			}
+			if (args.size() == 0) {
+				return resolveVariable("+");
+			}
+			return std::make_shared<Value>(*args[0] + *args[1]);
+		}},
+
+		{"-", [this](const List& args) {
+			if (args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("-");
+			}
+			if (args.size() == 1) {
+				auto zero = Value(Int(0));
+				upconvert(*args[0], zero);
+				return std::make_shared<Value>(zero - *args[0]);
+			}
+			return std::make_shared<Value>(*args[0] - *args[1]);
+		}},
+
+		{"*", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("*");
+			}
+			return std::make_shared<Value>(*args[0] * *args[1]);
+		}},
+
+		{"/", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("/");
+			}
+			return std::make_shared<Value>(*args[0] / *args[1]);
+		}},
+
+		{"%", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("%");
+			}
+			return std::make_shared<Value>(*args[0] % *args[1]);
+		}},
+
+		{"==", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("==");
+			}
+			return std::make_shared<Value>((Int)(*args[0] == *args[1]));
+		}},
+
+		{"!=", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("!=");
+			}
+			return std::make_shared<Value>((Int)(*args[0] != *args[1]));
+		}},
+
+		{"||", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("||");
+			}
+			return std::make_shared<Value>((Int)(*args[0] || *args[1]));
+		}},
+
+		{"&&", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("&&");
+			}
+			return std::make_shared<Value>((Int)(*args[0] && *args[1]));
+		}},
+
+		{"++", [](const List& args) {
+			if (args.size() == 0) {
+				return std::make_shared<Value>();
+			}
+			if (args.size() > 1) {
+				throw Exception("Must have 0 or 1 arguments");
+			}
+			auto i = args.size() - 1;
+			if (i) {
+				// prefix
+				*args[i] += Value(Int(1));
+				return args[i];
+			}
+			else {
+				// postfix
+				auto val = std::make_shared<Value>(*args[i]);
+				*args[i] += Value(Int(1));
+				return val;
+			}
+		}},
+
+		{"--", [](const List& args) {
+			if (args.size() == 0) {
+				return std::make_shared<Value>();
+			}
+			if (args.size() > 1) {
+				throw Exception("Must have 0 or 1 arguments");
+			}
+			auto i = args.size() - 1;
+			if (i) {
+				// prefix
+				*args[i] -= Value(Int(1));
+				return args[i];
+			}
+			else {
+				// postfix
+				auto val = std::make_shared<Value>(*args[i]);
+				*args[i] -= Value(Int(1));
+				return val;
+			}
+		}},
+
+		{"+=", [](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return std::make_shared<Value>();
+			}
+			*args[0] += *args[1];
+			return args[0];
+		}},
+
+		{"-=", [](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return std::make_shared<Value>();
+			}
+			*args[0] -= *args[1];
+			return args[0];
+		}},
+
+		{"*=", [](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return std::make_shared<Value>();
+			}
+			*args[0] *= *args[1];
+			return args[0];
+		}},
+
+		{"/=", [](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return std::make_shared<Value>();
+			}
+			*args[0] /= *args[1];
+			return args[0];
+		}},
+
+		{">", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable(">");
+			}
+			return std::make_shared<Value>((Int)(*args[0] > *args[1]));
+			}},
+
+		{"<", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("<");
+			}
+			return std::make_shared<Value>((Int)(*args[0] < *args[1]));
+		}},
+
+		{">=", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable(">=");
+			}
+			return std::make_shared<Value>((Int)(*args[0] >= *args[1]));
+		}},
+
+		{"<=", [this](const List& args) {
+			if (args.size() == 1 || args.size() > 2) {
+				throw Exception("Must have 0 or 2 arguments");
+			}
+			if (args.size() == 0) {
+				return resolveVariable("<=");
+			}
+			return std::make_shared<Value>((Int)(*args[0] <= *args[1]));
+		}},
+
+		{"!", [](const List& args) {
+
+				if (args.size() == 0) {
+					return std::make_shared<Value>(Int(0));
+				}
+				if (args.size() == 1) {
+					if (args[0]->getType() != Type::Int) return std::make_shared<Value>();
+					auto val = Int(1);
+					for (auto i = Int(1); i <= args[0]->getInt(); ++i) {
+						val *= i;
+					}
+					return std::make_shared<Value>(val);
+				}
+				if (args.size() == 2) {
+					return std::make_shared<Value>((Bool)(!args[1]->getBool()));
+				}
+				throw Exception("Must have 0, 1 or 2 arguments");
+				return std::make_shared<Value>();
+			}},
+
+			{ "#", [this](const List& args) {
+				if (args.size() > 1) {
+					throw Exception("Must have 0 or 1 arguments");
+				}
+				if (args.size() == 0) {
+					return resolveVariable("#");
+				}
+				return std::make_shared<Value>((Int)args[0]->getHash());
+			} },
+
+				// aliases
+			{"identity", [](List args) {
+				if (args.size() == 0) {
+					return std::make_shared<Value>();
+				}
+				return args[0];
+			}},
+
+			{"copy", [](List args) {
+				if (args.size() == 0) {
+					return std::make_shared<Value>();
+				}
+				if (args[0]->getType() == Type::Class) {
+					return std::make_shared<Value>(std::make_shared<Class>(*args[0]->getClass()));
+				}
+				return std::make_shared<Value>(*args[0]);
+			}},
+
+			{"listindex", [](List args) {
+					if (args.size() > 0) {
+						if (args.size() == 1) {
+							return args[0];
+						}
+
+						auto var = args[0];
+						if (args[1]->getType() != Type::Int) {
+							var->upconvert(Type::Map);
+						}
+
+						switch (var->getType()) {
+						case Type::Array: {
+							auto ival = args[1]->getInt();
+							auto& arr = var->getArray();
+							if (ival < 0 || ival >= (Int)arr.size()) {
+								throw Exception("Out of bounds array access index "s + std::to_string(ival) + ", array length " + std::to_string(arr.size()));
+							}
+							else {
+								switch (arr.getType()) {
+								case Type::Int:
+									return std::make_shared<Value>(arr.value.asInt[ival]);
+									break;
+								case Type::Float:
+									return std::make_shared<Value>(arr.value.asFloat[ival]);
+									break;
+								//case Type::Vec3:
+								//	return std::make_shared<Value>(get<vector<vec3>>(arr.value)[ival]);
+								//	break;
+								case Type::String:
+									return std::make_shared<Value>(arr.value.asString[ival]);
+									break;
+								default:
+									throw Exception("Attempting to access array of illegal type");
+									break;
+								}
+							}
+						}
+						break;
+						default:
+							var = std::make_shared<Value>(*var);
+							var->upconvert(Type::List);
+							[[fallthrough]];
+						case Type::List: {
+								auto ival = args[1]->getInt();
+								auto& list = var->getList();
+								if (ival < 0 || ival >= (Int)list.size()) {
+									throw Exception("Out of bounds list access index "s + std::to_string(ival) + ", list length " + std::to_string(list.size()));
+								}
+								else {
+									return list[ival];
+								}
+						}
+						break;
+						case Type::Class: {
+							auto strval = args[1]->getString();
+							auto& struc = var->getClass();
+							auto iter = struc->variables.find(strval);
+							if (iter == struc->variables.end()) {
+								throw Exception("Class `"s + struc->name + "` does not contain member `" + strval + "`");
+							}
+							else {
+								return iter->second;
+							}
+						}
+						break;
+						case Type::Map:
+					{
+						auto& dict = var->getDictionary();
+						auto hash = args[1]->getHash();
+						if (dict->find(hash) == dict->end()) {
+							auto newVal = std::make_shared<Value>();
+							newVal->typeDescriptor.isDynamic = true;
+							newVal->typeDescriptor.isInit = false; // Need to be false so assignment allows converting type
+							(*dict)[hash] = newVal;
+						}
+						return (*dict)[hash];
+					}
+					break;
+						case Type::Set:
+						{
+							auto& dict = var->getSet();
+							ValuePtr ref = nullptr;// (*dict)[args[1]->getHash()];
+							if (ref == nullptr) {
+								ref = std::make_shared<Value>();
+							}
+							return ref;
+						}
+						break;
+						}
+					}
+					return std::make_shared<Value>();
+				}},
+// casting
+			{"bool", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(Int(0));
+					}
+					auto val = *args[0];
+					val.hardconvert(Type::Int);
+					val.value.asInt = (Int)args[0]->getBool();
+					return std::make_shared<Value>(val);
+				}},
+
+				{"int", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(Int(0));
+					}
+					auto val = *args[0];
+					val.hardconvert(Type::Int);
+					return std::make_shared<Value>(val);
+				}},
+
+				{"float", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(Float(0.0));
+					}
+					auto val = *args[0];
+					val.hardconvert(Type::Float);
+					return std::make_shared<Value>(val);
+				}},
+
+			//{"vec3", [](const List& args) {
+			//	if (args.size() == 0) {
+			//		return std::make_shared<Value>(vec3());
+			//	}
+			//	if (args.size() < 3) {
+			//		auto val = *args[0];
+			//		val.hardconvert(Type::Float);
+			//		return std::make_shared<Value>(vec3((float)val.getFloat()));
+			//	}
+			//	auto x = *args[0];
+			//	x.hardconvert(Type::Float);
+			//	auto y = *args[1];
+			//	y.hardconvert(Type::Float);
+			//	auto z = *args[2];
+			//	z.hardconvert(Type::Float);
+			//	return std::make_shared<Value>(vec3((float)x.getFloat(), (float)y.getFloat(), (float)z.getFloat()));
+			//	 }},
+
+			{"string", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(""s);
+					}
+					auto val = *args[0];
+					val.hardconvert(Type::String);
+					return std::make_shared<Value>(val);
+				}},
+
+			{"array", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(Array());
+					}
+					auto list = std::make_shared<Value>(args);
+					list->hardconvert(Type::Array);
+					return list;
+				}},
+
+			{"list", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(List());
+					}
+					return std::make_shared<Value>(args);
+				}},
+
+				{ "set", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(std::make_shared<Set>());
+					}
+					if (args.size() == 1) {
+						auto val = *args[0];
+						val.hardconvert(Type::Set);
+						return std::make_shared<Value>(val);
+					}
+					auto dict = std::make_shared<Value>(std::make_shared<Set>());
+					for (auto&& arg : args) {
+						auto val = *arg;
+						val.hardconvert(Type::Set);
+						dict->getSet()->merge(*val.getSet());
+					}
+					return dict;
+				}},
+
+			{"dictionary", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(std::make_shared<Dictionary>());
+					}
+					if (args.size() == 1) {
+						auto val = *args[0];
+						val.hardconvert(Type::Map);
+						return std::make_shared<Value>(val);
+					}
+					auto dict = std::make_shared<Value>(std::make_shared<Dictionary>());
+					for (auto&& arg : args) {
+						auto val = *arg;
+						val.hardconvert(Type::Map);
+						dict->getDictionary()->merge(*val.getDictionary());
+					}
+					return dict;
+				}},
+
+			{"toarray", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(Array());
+					}
+					auto val = *args[0];
+					val.hardconvert(Type::Array);
+					return std::make_shared<Value>(val);
+				}},
+
+			{"tolist", [](const List& args) {
+					if (args.size() == 0) {
+						return std::make_shared<Value>(List());
+					}
+					auto val = *args[0];
+					val.hardconvert(Type::List);
+					return std::make_shared<Value>(val);
+				}},
+
+					// overal stdlib
+						{"typeof", [](List args) {
+							if (args.size() == 0) {
+								return std::make_shared<Value>();
+							}
+							return std::make_shared<Value>(getTypeName(args[0]->getType()));
+							}},
+
+						{"sqrt", [](const List& args) {
+							if (args.size() == 0) {
+								return std::make_shared<Value>();
+							}
+							auto val = *args[0];
+							val.hardconvert(Type::Float);
+							return std::make_shared<Value>(sqrt(val.getFloat()));
+							}},
+
+						{"sin", [](const List& args) {
+							if (args.size() == 0) {
+								return std::make_shared<Value>();
+							}
+							auto val = *args[0];
+							val.hardconvert(Type::Float);
+							return std::make_shared<Value>(sin(val.getFloat()));
+							}},
+
+						{"cos", [](const List& args) {
+							if (args.size() == 0) {
+								return std::make_shared<Value>();
+							}
+							auto val = *args[0];
+							val.hardconvert(Type::Float);
+							return std::make_shared<Value>(cos(val.getFloat()));
+							}},
+
+						{"tan", [](const List& args) {
+							if (args.size() == 0) {
+								return std::make_shared<Value>();
+							}
+							auto val = *args[0];
+							val.hardconvert(Type::Float);
+							return std::make_shared<Value>(tan(val.getFloat()));
+							}},
+
+						{"pow", [](const List& args) {
+							if (args.size() < 2) {
+								return std::make_shared<Value>(Float(0));
+							}
+							auto val = *args[0];
+							val.hardconvert(Type::Float);
+							auto val2 = *args[1];
+							val2.hardconvert(Type::Float);
+							return std::make_shared<Value>(pow(val.getFloat(), val2.getFloat()));
+							}},
+
+						{"abs", [](const List& args) {
+							if (args.size() == 0) {
+								return std::make_shared<Value>();
+							}
+							switch (args[0]->getType()) {
+							case Type::Int:
+								return std::make_shared<Value>(Int(abs(args[0]->getInt())));
+								break;
+							case Type::Float:
+								return std::make_shared<Value>(Float(fabs(args[0]->getFloat())));
+								break;
+							default:
+								return std::make_shared<Value>();
+								break;
+							}
+							}},
+
+						{"min", [](const List& args) {
+							if (args.size() < 2) {
+								return std::make_shared<Value>();
+							}
+							auto val = *args[0];
+							auto val2 = *args[1];
+							upconvertThrowOnNonNumberToNumberCompare(val, val2);
+							if (val > val2) {
+								return std::make_shared<Value>(val2);
+							}
+							return std::make_shared<Value>(val);
+							}},
+
+						{"max", [](const List& args) {
+							if (args.size() < 2) {
+								return std::make_shared<Value>();
+							}
+							auto val = *args[0];
+							auto val2 = *args[1];
+							upconvertThrowOnNonNumberToNumberCompare(val, val2);
+							if (val < val2) {
+								return std::make_shared<Value>(val2);
+							}
+							return std::make_shared<Value>(val);
+							}},
+
+						{"swap", [](const List& args) {
+							if (args.size() < 2) {
+								return std::make_shared<Value>();
+							}
+							auto v = *args[0];
+							*args[0] = *args[1];
+							*args[1] = v;
+
+							return std::make_shared<Value>();
+							} },
+
+							{ "print", [this](const List& args) {
+							for (auto&& arg : args) {
+#ifdef TEST_MOD
+								__DEBUG_OUT__ += arg->getPrintString();
+#else
+								printf("%s", arg->getPrintString().c_str());
+#endif
+							}
+#ifndef  TEST_MOD
+							printf("\n");
+#endif
+							return std::make_shared<Value>();
+							}},
+
+						{"getline", [](const List& args) {
+							std::string s;
+							// blocking calls are fine
+							getline(std::cin, s);
+							if (args.size() > 0) {
+								*args[0] = Value(s);
+							}
+							return std::make_shared<Value>(s);
+							}},
+
+						{"map", [this](const List& args) {
+							if (args.size() < 2 || args[1]->getType() != Type::Function) {
+								return std::make_shared<Value>();
+							}
+							auto ret = std::make_shared<Value>(List());
+							auto& retList = ret->getList();
+							auto func = args[1]->getFunction();
+
+							if (args[0]->getType() == Type::Array) {
+								auto val = *args[0];
+								val.upconvert(Type::List);
+								for (auto&& v : val.getList()) {
+									retList.push_back(callFunction(func, { v }));
+								}
+								return ret;
+							}
+
+							for (auto&& v : args[0]->getList()) {
+								retList.push_back(callFunction(func, { v }));
+							}
+							return ret;
+
+							}},
+
+						{"fold", [this](const List& args) {
+							if (args.size() < 3 || args[1]->getType() != Type::Function) {
+								return std::make_shared<Value>();
+							}
+
+							auto func = args[1]->getFunction();
+							auto iter = args[2];
+
+							if (args[0]->getType() == Type::Array) {
+								auto val = *args[0];
+								val.upconvert(Type::List);
+								for (auto&& v : val.getList()) {
+									iter = callFunction(func, { iter, v });
+								}
+								return iter;
+							}
+
+							for (auto&& v : args[0]->getList()) {
+								iter = callFunction(func, { iter, v });
+							}
+							return iter;
+							}},
+
+						{"clock", [](const List&) {
+							return std::make_shared<Value>(Int(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+							}},
+
+						{"getduration", [](const List& args) {
+							if (args.size() == 2 && args[0]->getType() == Type::Int && args[1]->getType() == Type::Int) {
+								std::chrono::duration<double> duration = std::chrono::high_resolution_clock::time_point(std::chrono::nanoseconds(args[1]->getInt())) -
+									std::chrono::high_resolution_clock::time_point(std::chrono::nanoseconds(args[0]->getInt()));
+								return std::make_shared<Value>(Float(duration.count()));
+							}
+							return std::make_shared<Value>();
+							}},
+
+						{"timesince", [](const List& args) {
+							if (args.size() == 1 && args[0]->getType() == Type::Int) {
+								std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() -
+									std::chrono::high_resolution_clock::time_point(std::chrono::nanoseconds(args[0]->getInt()));
+								return std::make_shared<Value>(Float(duration.count()));
+							}
+							return std::make_shared<Value>();
+							}},
+
+								// collection functions
+									{"length", [](const List& args) {
+										if (args.size() == 0 || (int)args[0]->getType() < (int)Type::String) {
+											return std::make_shared<Value>(Int(0));
+										}
+										if (args[0]->getType() == Type::String) {
+											return std::make_shared<Value>((Int)args[0]->getString().size());
+										}
+										if (args[0]->getType() == Type::Array) {
+											return std::make_shared<Value>((Int)args[0]->getArray().size());
+										}
+										if (args[0]->getType() == Type::Set) {
+											return std::make_shared<Value>((Int)args[0]->getSet()->size());
+										}
+										if (args[0]->getType() == Type::Map) {
+											return std::make_shared<Value>((Int)args[0]->getDictionary()->size());
+										}
+										if (args[0]->getType() == Type::List) {
+											return std::make_shared<Value>((Int)args[0]->getList().size());
+										}
+										throw;
+										}},
+
+									{"find", [](const List& args) {
+										if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array) {
+											return std::make_shared<Value>();
+										}
+										if (args[0]->getType() == Type::Array) {
+											if (args[1]->getType() == args[0]->getArray().getType()) {
+												switch (args[0]->getArray().getType()) {
+												case Type::Int:
+												{
+													auto& arry = args[0]->getStdVector<Int>();
+													auto iter = find(arry.begin(), arry.end(), args[1]->getInt());
+													if (iter == arry.end()) {
+														return std::make_shared<Value>();
+													}
+													return std::make_shared<Value>((Int)(iter - arry.begin()));
+												}
+												break;
+												case Type::Float:
+												{
+													auto& arry = args[0]->getStdVector<Float>();
+													auto iter = find(arry.begin(), arry.end(), args[1]->getFloat());
+													if (iter == arry.end()) {
+														return std::make_shared<Value>();
+													}
+													return std::make_shared<Value>((Int)(iter - arry.begin()));
+												}
+												break;
+												//case Type::Vec3:
+												//{
+												//	auto& arry = args[0]->getStdVector<vec3>();
+												//	auto iter = find(arry.begin(), arry.end(), args[1]->getVec3());
+												//	if (iter == arry.end()) {
+												//		return std::make_shared<Value>();
+												//	}
+												//	return std::make_shared<Value>((Int)(iter - arry.begin()));
+												//}
+												break;
+												case Type::String:
+												{
+													auto& arry = args[0]->getStdVector<std::string>();
+													auto iter = find(arry.begin(), arry.end(), args[1]->getString());
+													if (iter == arry.end()) {
+														return std::make_shared<Value>();
+													}
+													return std::make_shared<Value>((Int)(iter - arry.begin()));
+												}
+												break;
+												case Type::Function:
+												{
+													auto& arry = args[0]->getStdVector<FunctionRef>();
+													auto iter = find(arry.begin(), arry.end(), args[1]->getFunction());
+													if (iter == arry.end()) {
+														return std::make_shared<Value>();
+													}
+													return std::make_shared<Value>((Int)(iter - arry.begin()));
+												}
+												break;
+												default:
+													break;
+												}
+											}
+											return std::make_shared<Value>();
+										}
+										auto& list = args[0]->getList();
+										for (size_t i = 0; i < list.size(); ++i) {
+											if (*list[i] == *args[1]) {
+												return std::make_shared<Value>((Int)i);
+											}
+										}
+										return std::make_shared<Value>();
+										}},
+
+									{"erase", [](const List& args) {
+										if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array || args[1]->getType() != Type::Int) {
+											return std::make_shared<Value>();
+										}
+
+										if (args[0]->getType() == Type::Array) {
+											switch (args[0]->getArray().getType()) {
+											case Type::Int:
+												args[0]->getStdVector<Int>().erase(args[0]->getStdVector<Int>().begin() + args[1]->getInt());
+												break;
+											case Type::Float:
+												args[0]->getStdVector<Float>().erase(args[0]->getStdVector<Float>().begin() + args[1]->getInt());
+												break;
+												//case Type::Vec3:
+												//	args[0]->getStdVector<vec3>().erase(args[0]->getStdVector<vec3>().begin() + args[1]->getInt());
+												//	break;
+												case Type::String:
+													args[0]->getStdVector<std::string>().erase(args[0]->getStdVector<std::string>().begin() + args[1]->getInt());
+													break;
+												case Type::Function:
+													args[0]->getStdVector<FunctionRef>().erase(args[0]->getStdVector<FunctionRef>().begin() + args[1]->getInt());
+													break;
+												default:
+													break;
+												}
+											}
+										else if (args[0]->getType() == Type::Array) {
+											args[0]->getDictionary()->erase(args[1]->getHash());
+										} else  {
+											args[0]->getList().erase(args[0]->getList().begin() + args[1]->getInt());
+										}
+											return std::make_shared<Value>();
+										}},
+
+					  {"pushback", [](const List& args) {
+						  if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array) {
+							  return std::make_shared<Value>();
+						  }
+
+						  if (args[0]->getType() == Type::Array) {
+							  if (args[0]->getArray().getType() == args[1]->getType()) {
+								  switch (args[0]->getArray().getType()) {
+								  case Type::Int:
+									  args[0]->getStdVector<Int>().push_back(args[1]->getInt());
+									  break;
+								  case Type::Float:
+									  args[0]->getStdVector<Float>().push_back(args[1]->getFloat());
+									  break;
+									  //case Type::Vec3:
+									  //	args[0]->getStdVector<vec3>().push_back(args[1]->getVec3());
+									  //	break;
+									  case Type::String:
+										  args[0]->getStdVector<std::string>().push_back(args[1]->getString());
+										  break;
+									  case Type::Function:
+										  args[0]->getStdVector<FunctionRef>().push_back(args[1]->getFunction());
+										  break;
+									  default:
+										  break;
+									  }
+								  }
+							  }
+			   else {
+				args[0]->getList().push_back(args[1]);
+			}
+			return std::make_shared<Value>();
+			}},
+
+		{"popback", [](const List& args) {
+			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
+				return std::make_shared<Value>();
+			}
+			if (args[0]->getType() == Type::Array) {
+				args[0]->getArray().pop_back();
+			}
+else {
+ args[0]->getList().pop_back();
+}
+return std::make_shared<Value>();
+}},
+
+{"popfront", [](const List& args) {
+	if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
+		return std::make_shared<Value>();
+	}
+	if (args[0]->getType() == Type::Array) {
+		switch (args[0]->getArray().getType()) {
+		case Type::Int:
+		{
+			auto& arry = args[0]->getStdVector<Int>();
+			arry.erase(arry.begin());
+		}
+		break;
+		case Type::Float:
+		{
+			auto& arry = args[0]->getStdVector<Float>();
+			arry.erase(arry.begin());
+		}
+		break;
+		//case Type::Vec3:
+		//{
+		//	auto& arry = args[0]->getStdVector<vec3>();
+		//	arry.erase(arry.begin());
+		//}
+		break;
+		case Type::Function:
+		{
+			auto& arry = args[0]->getStdVector<FunctionRef>();
+			arry.erase(arry.begin());
+		}
+		break;
+		case Type::String:
+		{
+			auto& arry = args[0]->getStdVector<std::string>();
+			arry.erase(arry.begin());
+		}
+		break;
+
+		default:
+			break;
+		}
+		return args[0];
+	}
+else {
+ auto& list = args[0]->getList();
+ list.erase(list.begin());
+}
+return std::make_shared<Value>();
+}},
+
+{"front", [](const List& args) {
+	if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
+		return std::make_shared<Value>();
+	}
+	if (args[0]->getType() == Type::Array) {
+		switch (args[0]->getArray().getType()) {
+		case Type::Int:
+			return std::make_shared<Value>(args[0]->getStdVector<Int>().front());
+		case Type::Float:
+			return std::make_shared<Value>(args[0]->getStdVector<Float>().front());
+			//case Type::Vec3:
+			//   return std::make_shared<Value>(args[0]->getStdVector<vec3>().front());
+			case Type::Function:
+				return std::make_shared<Value>(args[0]->getStdVector<FunctionRef>().front());
+			case Type::String:
+				return std::make_shared<Value>(args[0]->getStdVector<std::string>().front());
+			default:
+				break;
+			}
+			return std::make_shared<Value>();
+		}
+else {
+ return args[0]->getList().front();
+}
+}},
+
+{"back", [](const List& args) {
+	if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
+		return std::make_shared<Value>();
+	}
+	if (args[0]->getType() == Type::Array) {
+		switch (args[0]->getArray().getType()) {
+		case Type::Int:
+			return std::make_shared<Value>(args[0]->getStdVector<Int>().back());
+		case Type::Float:
+			return std::make_shared<Value>(args[0]->getStdVector<Float>().back());
+			//case Type::Vec3:
+			//	return std::make_shared<Value>(args[0]->getStdVector<vec3>().back());
+			case Type::Function:
+				return std::make_shared<Value>(args[0]->getStdVector<FunctionRef>().back());
+			case Type::String:
+				return std::make_shared<Value>(args[0]->getStdVector<std::string>().back());
+			default:
+				break;
+			}
+			return std::make_shared<Value>();
+		}
+else {
+ return args[0]->getList().back();
+}
+}},
+
+{"reverse", [](const List& args) {
+	if (args.size() < 1 || (int)args[0]->getType() < (int)Type::String) {
+		return std::make_shared<Value>();
+	}
+	auto copy = std::make_shared<Value>(*args[0]);
+
+	if (args[0]->getType() == Type::String) {
+		auto& str = copy->getString();
+		std::reverse(str.begin(), str.end());
+		return copy;
+	}
+else if (args[0]->getType() == Type::Array) {
+ switch (copy->getArray().getType()) {
+ case Type::Int:
+ {
+	 auto& vl = copy->getStdVector<Int>();
+	 std::reverse(vl.begin(), vl.end());
+	 return copy;
+ }
+	 break;
+ case Type::Float:
+ {
+	 auto& vl = copy->getStdVector<Float>();
+	 std::reverse(vl.begin(), vl.end());
+	 return copy;
+ }
+	 break;
+	 //case Type::Vec3:
+	 //{
+	 //	auto& vl = copy->getStdVector<vec3>();
+	 //	std::reverse(vl.begin(), vl.end());
+	 //	return copy;
+	 //}
+	 //	break;
+	 case Type::String:
+	 {
+		 auto& vl = copy->getStdVector<std::string>();
+		 std::reverse(vl.begin(), vl.end());
+		 return copy;
+	 }
+		 break;
+	 case Type::Function:
+	 {
+		 auto& vl = copy->getStdVector<FunctionRef>();
+		 std::reverse(vl.begin(), vl.end());
+		 return copy;
+	 }
+		 break;
+	 default:
+		 break;
+	 }
+ }
+else if (args[0]->getType() == Type::List) {
+ auto& vl = copy->getList();
+ std::reverse(vl.begin(), vl.end());
+ return copy;
+}
+return std::make_shared<Value>();
+}},
+
+{"range", [](const List& args) {
+	if (args.size() == 2 && args[0]->getType() == args[1]->getType()) {
+		if (args[0]->getType() == Type::Int) {
+			auto ret = std::make_shared<Value>(Array(std::vector<Int>{}));
+			auto& arry = ret->getStdVector<Int>();
+			auto a = args[0]->getInt();
+			auto b = args[1]->getInt();
+			if (b > a) {
+				arry.reserve(b - a);
+				for (Int i = a; i <= b; i++) {
+					arry.push_back(i);
+				}
+			}
+else {
+ arry.reserve(a - b);
+ for (Int i = a; i >= b; i--) {
+	 arry.push_back(i);
+ }
+}
+return ret;
+}
+else if (args[0]->getType() == Type::Float) {
+ auto ret = std::make_shared<Value>(Array(std::vector<Float>{}));
+ auto& arry = ret->getStdVector<Float>();
+ Float a = args[0]->getFloat();
+ Float b = args[1]->getFloat();
+ if (b > a) {
+	 arry.reserve((Int)(b - a));
+	 for (Float i = a; i <= b; i++) {
+		 arry.push_back(i);
+	 }
+ }
+else {
+ arry.reserve((Int)(a - b));
+ for (Float i = a; i >= b; i--) {
+	 arry.push_back(i);
+ }
+}
+return ret;
+}
+}
+if (args.size() < 3 || (int)args[0]->getType() < (int)Type::String) {
+	return std::make_shared<Value>();
+}
+auto indexA = *args[1];
+indexA.hardconvert(Type::Int);
+auto indexB = *args[2];
+indexB.hardconvert(Type::Int);
+auto intdexA = indexA.getInt();
+auto intdexB = indexB.getInt();
+
+if (args[0]->getType() == Type::String) {
+	return std::make_shared<Value>(args[0]->getString().substr(intdexA, intdexB));
+}
+else if (args[0]->getType() == Type::Array) {
+ if (args[0]->getArray().getType() == args[1]->getType()) {
+	 switch (args[0]->getArray().getType()) {
+	 case Type::Int:
+		 return std::make_shared<Value>(Array(std::vector<Int>(args[0]->getStdVector<Int>().begin() + intdexA, args[0]->getStdVector<Int>().begin() + intdexB)));
+		 break;
+	 case Type::Float:
+		 return std::make_shared<Value>(Array(std::vector<Float>(args[0]->getStdVector<Float>().begin() + intdexA, args[0]->getStdVector<Float>().begin() + intdexB)));
+		 break;
+		 //case Type::Vec3:
+		 //	return std::make_shared<Value>(Array(vector<vec3>(args[0]->getStdVector<vec3>().begin() + intdexA, args[0]->getStdVector<vec3>().begin() + intdexB)));
+		 //	break;
+		 case Type::String:
+			 return std::make_shared<Value>(Array(std::vector<std::string>(args[0]->getStdVector<std::string>().begin() + intdexA, args[0]->getStdVector<std::string>().begin() + intdexB)));
+			 break;
+		 case Type::Function:
+			 return std::make_shared<Value>(Array(std::vector<FunctionRef>(args[0]->getStdVector<FunctionRef>().begin() + intdexA, args[0]->getStdVector<FunctionRef>().begin() + intdexB)));
+			 break;
+		 default:
+			 break;
+		 }
+	 }
+ }
+else {
+ return std::make_shared<Value>(List(args[0]->getList().begin() + intdexA, args[0]->getList().begin() + intdexB));
+}
+return std::make_shared<Value>();
+}},
+
+{"replace", [](const List& args) {
+	if (args.size() < 3 || args[0]->getType() != Type::String || args[1]->getType() != Type::String || args[2]->getType() != Type::String) {
+		return std::make_shared<Value>();
+	}
+
+	std::string& input = args[0]->getString();
+	const std::string& lookfor = args[1]->getString();
+	const std::string& replacewith = args[2]->getString();
+	size_t pos = 0;
+	size_t lpos = 0;
+	while ((pos = input.find(lookfor, lpos)) != std::string::npos) {
+		input.replace(pos, lookfor.size(), replacewith);
+		lpos = pos + replacewith.size();
+	}
+
+	return std::make_shared<Value>(input);
+	}},
+
+{"startswith", [](const List& args) {
+	if (args.size() < 2 || args[0]->getType() != Type::String || args[1]->getType() != Type::String) {
+		return std::make_shared<Value>();
+	}
+	return std::make_shared<Value>(Int(startswith(args[0]->getString(), args[1]->getString())));
+	}},
+
+{"endswith", [](const List& args) {
+	if (args.size() < 2 || args[0]->getType() != Type::String || args[1]->getType() != Type::String) {
+		return std::make_shared<Value>();
+	}
+	return std::make_shared<Value>(Int(endswith(args[0]->getString(), args[1]->getString())));
+	}},
+
+{"contains", [](const List& args) {
+	if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array) {
+		return std::make_shared<Value>(Int(0));
+	}
+	if (args[0]->getType() == Type::Array) {
+		auto item = *args[1];
+		switch (args[0]->getArray().getType()) {
+		case Type::Int:
+			item.hardconvert(Type::Int);
+			return std::make_shared<Value>((Int)contains(args[0]->getStdVector<Int>(), item.getInt()));
+		case Type::Float:
+			item.hardconvert(Type::Float);
+			return std::make_shared<Value>((Int)contains(args[0]->getStdVector<Float>(), item.getFloat()));
+			//case Type::Vec3:
+			//	item.hardconvert(Type::Vec3);
+			//	return std::make_shared<Value>((Int)contains(args[0]->getStdVector<vec3>(), item.getVec3()));
+			case Type::String:
+				item.hardconvert(Type::String);
+				return std::make_shared<Value>((Int)contains(args[0]->getStdVector<std::string>(), item.getString()));
+			default:
+				break;
+			}
+			return std::make_shared<Value>(Int(0));
+		}
+		auto& list = args[0]->getList();
+		for (size_t i = 0; i < list.size(); ++i) {
+			if (*list[i] == *args[1]) {
+				return std::make_shared<Value>(Int(1));
+			}
+		}
+		return std::make_shared<Value>(Int(0));
+		}},
+
+	{"split", [](const List& args) {
+		if (args.size() > 0 && args[0]->getType() == Type::String) {
+			if (args.size() == 1) {
+				std::vector<std::string> chars;
+				for (auto c : args[0]->getString()) {
+					chars.push_back(""s + c);
+				}
+				return std::make_shared<Value>(Array(chars));
+			}
+			return std::make_shared<Value>(Array(split(args[0]->getString(), args[1]->getPrintString())));
+		}
+		return std::make_shared<Value>();
+		}},
+
+	{"sort", [](const List& args) {
+		if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
+			return std::make_shared<Value>();
+		}
+		if (args[0]->getType() == Type::Array) {
+			switch (args[0]->getArray().getType()) {
+			case Type::Int:
+			{
+				auto& arry = args[0]->getStdVector<Int>();
+				std::sort(arry.begin(), arry.end());
+			}
+			break;
+			case Type::Float:
+			{
+				auto& arry = args[0]->getStdVector<Float>();
+				std::sort(arry.begin(), arry.end());
+			}
+			break;
+			case Type::String:
+			{
+				auto& arry = args[0]->getStdVector<std::string>();
+				std::sort(arry.begin(), arry.end());
+			}
+			break;
+			//case Type::Vec3:
+			//{
+			//	auto& arry = args[0]->getStdVector<vec3>();
+			//	std::sort(arry.begin(), arry.end(), [](const vec3& a, const vec3& b) { return a.x < b.x; });
+			//}
+			//break;
+			default:
+				break;
+			}
+			return args[0];
+		}
+		auto& list = args[0]->getList();
+		std::sort(list.begin(), list.end(), [](const ValuePtr& a, const ValuePtr& b) { return *a < *b; });
+		return args[0];
+		}},
+	{ "applyfunction", [this](List args) {
+		if (args.size() < 2 || args[1]->getType() != Type::Class) {
+			auto func = args[0]->getType() == Type::Function ? args[0] : args[0]->getType() == Type::String ? resolveVariable(args[0]->getString()) : throw Exception("Cannot call non existant function: null");
+			auto list = List();
+			for (size_t i = 1; i < args.size(); ++i) {
+				list.push_back(args[i]);
+			}
+			return callFunction(func->getFunction(), list);
+		}
+		return std::make_shared<Value>();
+		}},
+		});
+
+	listIndexFunctionVarLocation = resolveVariable("listindex", modules.back().scope);
+	identityFunctionVarLocation = resolveVariable("identity", modules.back().scope);
+}
+
+
+
+ValuePtr IkigaiScriptInterpreter::callFunction(const std::string& name, ScopePtr scope, const List& args) {
+	return callFunction(resolveFunction(name, scope), scope, args);
+}
+
+void each(ExpressionPtr collection, std::function<void(ExpressionPtr)> func) {
+	func(collection);
+	for (auto&& ex : *collection) {
+		each(ex, func);
+	}
+}
+
+ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
+	//if (!fnc->isCoro) {
+	//	throw;
+	//}
+	//if (fnc->type == FunctionType::Constructor) {
+	//	throw;
+	//}
+	if (!coro->isActive) {
+		return std::make_shared<Value>();
+	}
+	switch (coro->func->getBodyType()) {
+	case FunctionBodyType::Subexpressions: {
+		auto& subexpressions = std::get<std::vector<ExpressionPtr>>(coro->func->body);
+
+		ValuePtr returnVal = nullptr;
+		int startExpr = coro->expressionId;
+		for (int i = startExpr; i < subexpressions.size(); i++) {
+			auto sub = subexpressions[i];
+			if (sub->type == ExpressionType::Return) {
+				returnVal = getValue(sub, coro->scope, coro->classs);
+				coro->isActive = false;
+				closeScope(coro->scope);
+				break;
+			}
+			else if (sub->type == ExpressionType::Yeld) {
+				returnVal = getValue(sub, coro->scope, coro->classs);
+				coro->expressionId = i + 1;
+				break;
+			}
+			else {
+				auto result = consolidated(sub, coro->scope, coro->classs);
+				if (result->type == ExpressionType::Return) {
+					returnVal = static_cast<ValueNode*>(result)->value;
+					coro->isActive = false;
+					closeScope(coro->scope);
+					break;
+				}
+				if (result->type == ExpressionType::Yeld) {
+					returnVal = static_cast<ValueNode*>(result)->value;
+					coro->expressionId = i + 1;
+					break;
+				}
+			}
+		}
+		return returnVal ? returnVal : std::make_shared<Value>();
+	}
+	default: throw;
+	}
+
+	//empty func
+	return std::make_shared<Value>();
+}
+
+ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, const List& args, Class* classs) {
+	switch (fnc->getBodyType()) {
+	case FunctionBodyType::Subexpressions: {
+		auto& subexpressions = get<std::vector<ExpressionPtr>>(fnc->body);
+		// get function scope
+			//TODO: if corutine try get scope else create new one
+
+		if (fnc->isCoro) { //always create scope for coro
+			scope = newScope(fnc->name, scope);
+		}
+		else {
+			scope = fnc->type == FunctionType::Constructor ? resolveScope(fnc->name, scope) : newScope(fnc->name, scope);
+		}
+
+		if (args.size() > fnc->argNames.size()) {
+			throw;
+		}
+
+		bool isTyped = false;
+		if (!fnc->types.empty()) {
+			isTyped = true;
+		}
+
+		//auto limit = std::min(args.size(), fnc->argNames.size());
+		std::vector<std::string> newVars;
+		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
+			if (fnc->argNames.size() - 1 == i && fnc->variableArgsParam) {
+				break;
+			}
+
+			auto& argName = fnc->argNames[i];
+			//auto& argType = fnc->types.at(argName);
+			auto& ref = scope->variables[argName];
+			if (ref == nullptr) {
+				newVars.push_back(fnc->argNames[i]);
+			}
+			if (i >= args.size()) {
+				if (fnc->defValues.contains(argName)) {
+					auto val = getValue(fnc->defValues[argName], scope, classs);
+					if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
+						throw;
+					}
+					ref = val;
+				}
+				else {
+					throw;
+				}
+			}
+			else {
+				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->types.at(argName))) {
+					throw;
+				}
+				ref = args[i];
+			}
+		}
+
+		if (fnc->variableArgsParam) {
+			List vargs;
+			auto& argName = fnc->argNames[fnc->argNames.size() - 1];
+			auto& ref = scope->variables[argName];
+			if (ref == nullptr) {
+				newVars.push_back(fnc->argNames[fnc->argNames.size() - 1]);
+			}
+			for (size_t i = fnc->argNames.size() - 1; i < args.size(); i++) {
+				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->variableArgsParamType.value())) {
+					throw;
+				}
+				vargs.push_back(args[i]);
+			}
+			ref = std::make_shared<Value>(vargs);
+		}
+
+		if (fnc->isCoro) {//return coro instance
+			auto coroRes = std::make_shared<Coro>();
+			coroRes->isActive = true;
+			coroRes->func = fnc;
+			coroRes->expressionId = 0;
+			coroRes->scope = scope;
+			coroRes->classs = classs;
+			return std::make_shared<Value>(coroRes);
+		}
+
+		ValuePtr returnVal = nullptr;
+
+		if (fnc->type == FunctionType::Constructor) {
+			returnVal = std::make_shared<Value>(make_shared<Class>(scope));
+			for (auto&& sub : subexpressions) {
+				getValue(sub, scope, returnVal->getClass().get());
+			}
+		}
+		else {
+			for (auto&& sub : subexpressions) {
+				if (sub->type == ExpressionType::Return) {
+					returnVal = getValue(sub, scope, classs);
+					break;
+				}
+				//else if (sub->type == ExpressionType::Yeld) {
+				//	//if (fnc->isCoro) {
+				//	//	auto parScope = scope->parent;
+				//	//	parScope->coroScopes
+				//	//}
+				//	//else {
+				//	//	throw;
+				//	//}
+				//	returnVal = getValue(sub, scope, classs);
+				//	break;
+				//}
+				else {
+					auto result = consolidated(sub, scope, classs);
+					if (result->type == ExpressionType::Return) {
+						returnVal = static_cast<ValueNode*>(result)->value;
+						break;
+					}
+					//if (result->type == ExpressionType::Yeld) {
+					//	returnVal = static_cast<ValueNode*>(result)->value;
+					//	break;
+					//}
+				}
+			}
+		}
+
+		if (fnc->type == FunctionType::Constructor) {
+			for (auto&& vr : newVars) {
+				scope->variables.erase(vr);
+				returnVal->getClass()->variables.erase(vr);
+			}
+		}
+
+		closeScope(scope);
+		return returnVal ? returnVal : std::make_shared<Value>();
+	}
+	case FunctionBodyType::Lambda: {
+		scope = newScope(fnc->name, scope);
+		auto returnVal = get<Lambda>(fnc->body)(args);
+		closeScope(scope);
+		return returnVal ? returnVal : std::make_shared<Value>();
+	}
+	case FunctionBodyType::ScopedLambda: {
+		scope = newScope(fnc->name, scope);
+		auto returnVal = get<ScopedLambda>(fnc->body)(scope, args);
+		closeScope(scope);
+		return returnVal ? returnVal : std::make_shared<Value>();
+	}
+	case FunctionBodyType::ClassLambda: {
+		scope = resolveScope(fnc->name, scope);
+		if (fnc->type == FunctionType::Constructor) {
+			auto returnVal = make_shared<Value>(make_shared<Class>(scope));
+			get<ClassLambda>(fnc->body)(returnVal->getClass().get(), scope, args);
+			closeScope(scope);
+			return returnVal;
+		}
+		else if (fnc->type == FunctionType::Common && args.size() >= 2 && args[1]->getType() == Type::Class) {
+			// apply function
+			classs = args[1]->getClass().get();
+		}
+		auto ret = get<ClassLambda>(fnc->body)(classs, scope, args);
+		closeScope(scope);
+		return ret;
+	}
+	}
+
+	//empty func
+	return std::make_shared<Value>();
+}
+
+FunctionRef IkigaiScriptInterpreter::newFunction(const std::string& name, ScopePtr scope, FunctionRef func) {
+	auto& ref = scope->functions[name];
+	ref = func;
+	if (ref->type == FunctionType::Common && scope->isClassScope) {
+		ref->type = FunctionType::Member;
+	}
+	auto funcvar = resolveVariable(name, scope);
+	*funcvar = Value(ref);
+	return ref;
+}
+
+FunctionRef IkigaiScriptInterpreter::newFunction(
+	const std::string& name,
+	ScopePtr scope,
+	const std::vector<std::string>& argNames,
+	const std::map<std::string, TypeDescriptor> types,
+	const std::map<std::string, ExpressionPtr> defValues
+) {
+	return newFunction(name, scope, std::make_shared<Function>(name, argNames, types, defValues));
+}
+
+FunctionRef IkigaiScriptInterpreter::newOperator(const std::string& name, ScopePtr scope, FunctionRef func) {
+	//if (func->type == FunctionType::Operator && scope->isClassScope) {
+	//	//Operator could not be in class
+	//	throw;
+	//}
+	if (!scope->operators.contains(name)) {
+		scope->operators[name] = {};
+	}
+	auto& ref = scope->operators[name];
+	ref.push_back(func);
+	auto funcvar = resolveVariable(name, scope);
+	*funcvar = Value(ref.back());
+	return ref.back();
+}
+
+FunctionRef IkigaiScriptInterpreter::newOperator(
+	const std::string& name,
+	ScopePtr scope,
+	const std::vector<std::string>& argNames,
+	const std::map<std::string, TypeDescriptor> types,
+	const std::map<std::string, ExpressionPtr> defValues
+) {
+	return newOperator(name, scope, std::make_shared<Function>(name, argNames, types, defValues, FunctionType::Operator));
+}
+
+FunctionRef IkigaiScriptInterpreter::newConstructor(const std::string& name, ScopePtr scope, FunctionRef func) {
+	auto& ref = scope->functions[name];
+	ref = func;
+	ref->type = FunctionType::Constructor;
+	auto funcvar = resolveVariable(name, scope);
+	*funcvar = Value(ref);
+	return ref;
+}
+
+FunctionRef IkigaiScriptInterpreter::newConstructor(
+	const std::string& name,
+	ScopePtr scope,
+	const std::vector<std::string>& argNames,
+	const std::map<std::string, TypeDescriptor> types,
+	const std::map<std::string, ExpressionPtr> defValues
+) {
+	return newConstructor(name, scope, std::make_shared<Function>(name, argNames, types, defValues));
+}
+
+FunctionRef IkigaiScriptInterpreter::newClass(const std::string& name, ScopePtr scope, const std::unordered_map<std::string, ValuePtr>& variables, const ClassLambda& constructor, const std::unordered_map<std::string, ClassLambda>& functions) {
+	scope = newClassScope(name, scope);
+
+	scope->variables = variables;
+	FunctionRef ret = newConstructor(name, scope->parent, std::make_shared<Function>(name, constructor));
+
+	for (auto& func : functions) {
+		newFunction(func.first, scope, func.second);
+	}
+
+	closeScope(scope);
+
+	return ret;
+}
+
+// name resolution for variables
+ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, ScopePtr scope) {
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->variables.find(name);
+		if (iter != scope->variables.end()) {
+			return iter->second;
+		}
+		else {
+			scope = scope->parent;
+		}
+	}
+	if (!scope) {
+		for (auto m : modules) {
+			auto iter = m.scope->variables.find(name);
+			if (iter != m.scope->variables.end()) {
+				return iter->second;
+			}
+		}
+	}
+	return initialScope->insertVar(name, std::make_shared<Value>());
+}
+
+ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, Class* classs, ScopePtr scope) {
+	if (classs) {
+		auto iter = classs->variables.find(name);
+		if (iter != classs->variables.end()) {
+			return iter->second;
+		}
+	}
+	return resolveVariable(name, scope);
+}
+
+FunctionRef IkigaiScriptInterpreter::resolveFunction(const std::string& name, Class* classs, ScopePtr scope) {
+	if (classs) {
+		auto iter = classs->functionScope->functions.find(name);
+		if (iter != classs->functionScope->functions.end()) {
+			return iter->second;
+		}
+	}
+	return resolveFunction(name, scope);
+}
+
+// name lookup for callfunction api method
+FunctionRef IkigaiScriptInterpreter::resolveFunction(const std::string& name, ScopePtr scope) {
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->functions.find(name);
+		if (iter != scope->functions.end()) {
+			return iter->second;
+		}
+		else {
+			scope = scope->parent;
+		}
+	}
+	auto& func = initialScope->functions[name];
+	func = std::make_shared<Function>(name);
+	return func;
+}
+
+//this should call after set default arguments and pack args...
+bool IkigaiScriptInterpreter::checkTypesInFunction(FunctionRef func, const List& args) {
+	if (func->argNames.size() != args.size()) {
+		throw;
+	}
+	if (func->argTypes.empty()) {
+		// it must be last in funcs overrides
+		// function is dynamic
+		return true;
+	}
+	int i = 0;
+	for (const auto& type : func->argTypes) {
+		if (!checkConvertTypes(args[i]->typeDescriptor, type)) {
+			return false;
+		}
+		i++;
+	}
+	return true;
+}
+
+FunctionRef IkigaiScriptInterpreter::resolveOperator(const std::string& name, ScopePtr scope, const List& args) {
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->operators.find(name);
+		if (iter != scope->operators.end()) {
+			for (auto oper : iter->second) {
+				if (checkTypesInFunction(oper, args)) {
+					return oper;
+				}
+			}
+		}
+		else {
+			scope = scope->parent;
+		}
+	}
+	//auto& func = initialScope->functions[name];
+	//func = std::make_shared<Function>(name);
+	//return func;
+	return nullptr;
+}
+
+ScopePtr IkigaiScriptInterpreter::resolveScope(const std::string& name, ScopePtr scope) {
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->scopes.find(name);
+		if (iter != scope->scopes.end()) {
+			if (initialScope != iter->second) {
+				iter->second->parent = initialScope;
+			}
+			return iter->second;
+		}
+		else {
+			if (!scope->parent) {
+				if (scope->name == name) {
+					if (initialScope != scope) {
+						scope->parent = initialScope;
+					}
+					return scope;
+				}
+			}
+			scope = scope->parent;
+		}
+	}
+	return initialScope->insertScope(make_shared<Scope>(name, initialScope));
+}
+
+
+TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name, ScopePtr scope) {
+	TypeDescriptor desc;
+	if (name == "Bool") {
+		desc.type = Type::Bool; return desc;
+	}
+	else if (name == "Int") {
+		desc.type = Type::Int; return desc;
+	}
+	else if (name == "Float") {
+		desc.type = Type::Float; return desc;
+	}
+	else if (name == "String") {
+		desc.type = Type::String; return desc;
+	}
+	else if (name == "List") {
+		desc.type = Type::List; return desc;
+	}
+	else if (name == "Array") {
+		desc.type = Type::Array; return desc;
+	}
+	else if (name == "Set") {
+		desc.type = Type::Set; return desc;
+	}
+	else if (name == "Map") {
+		desc.type = Type::Map; return desc;
+	}
+	else {
+		desc.type = Type::Class;
+	}
+
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->scopes.find(name);
+		if (iter != scope->scopes.end()) {
+			return desc;
+		}
+		else {
+			if (!scope->parent) {
+				if (scope->name == name) {
+					return desc;
+				}
+			}
+			scope = scope->parent;
+		}
+	}
+	throw;
+}
+
+BlockResult IkigaiScriptInterpreter::needsToReturn(ExpressionPtr exp, ScopePtr scope, Class* classs) {
+	if (exp->type == ExpressionType::Return) {
+		return {LoopInterupt::None, getValue(exp, scope, classs), nullptr};
+	}
+	else {
+		auto result = consolidated(exp, scope, classs);
+		if (result->type == ExpressionType::Continue) {
+			return {LoopInterupt::Continue, nullptr, nullptr};
+		}
+		if (result->type == ExpressionType::Break) {
+			return {LoopInterupt::Break, nullptr, nullptr};
+		}
+		if (result->type == ExpressionType::Return) {
+			auto val = static_cast<ValueNode*>(result)->value;
+			return {LoopInterupt::None, std::move(val), nullptr};
+		}
+		if (result->type == ExpressionType::Value) {
+			auto val = static_cast<ValueNode*>(result)->value;
+			return {LoopInterupt::None, nullptr, std::move(val)};
+		}
+	}
+	return {LoopInterupt::None, nullptr, nullptr};
+}
+
+BlockResult IkigaiScriptInterpreter::needsToReturn(const std::vector<ExpressionPtr>& subexpressions, ScopePtr scope, Class* classs) {
+	ValuePtr lastVal = nullptr;
+	for (auto&& sub : subexpressions) {
+		if (sub->type == ExpressionType::Continue) {
+			return {LoopInterupt::Continue, nullptr, lastVal};
+		}
+		if (sub->type == ExpressionType::Break) {
+			return {LoopInterupt::Break, nullptr, lastVal};
+		}
+		auto returnVal = needsToReturn(sub, scope, classs);
+		if (returnVal.explicitReturn || returnVal.interrupt == LoopInterupt::Break || returnVal.interrupt == LoopInterupt::Continue) {
+			return returnVal;
+		}
+		lastVal = returnVal.lastValue;
+	}
+	return {LoopInterupt::None, nullptr, lastVal};
+}
+
+#include <chrono>
+// walk the tree depth first and replace any function expressions 
+// with a value expression of their results
+ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr scope, Class* classs) {
+	//FOR DEBUGGER
+	//using namespace std::chrono_literals;
+	//while (!data_is_ready_) {
+	//	std::this_thread::sleep_for(0.1s);
+	//}
+	//data_is_ready_ = false;
+	
+	std::cout << exp->line << std::endl;
+
+	LoopInterupt checkLoopInterupt = LoopInterupt::None;
+	auto returnDefExpr = [&checkLoopInterupt, this]() -> ExpressionPtr {
+		switch (checkLoopInterupt) {
+			case LoopInterupt::None: return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
+			case LoopInterupt::Break: return arena.make<Break>();
+			case LoopInterupt::Continue: return arena.make<Continue>();
+		}
+		return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
+	};
+	switch (exp->type) {
+	case ExpressionType::DefineVar: {
+		auto def = static_cast<DefineVar*>(exp);
+		std::cout << "DEFINE VAR START" << std::endl;
+		std::cout << "DEFINE VAR PTR: " << def->defineExpression << std::endl;
+		std::cout << "DEFINE VAR: " << def->name << " TYPE: " << (int)def->defineExpression->type << std::endl;
+		auto val = getValue(def->defineExpression, scope, classs);
+		scope->variables[def->name] = val;
+		return arena.make<ValueNode>(val);
+	}
+		break;
+	case ExpressionType::ResolveVar:
+		return arena.make<ValueNode>(resolveVariable(static_cast<ResolveVar*>(exp)->name, scope));
+	case ExpressionType::Continue:
+	case ExpressionType::Break:
+		return exp;
+	case ExpressionType::MemberVariable: {
+		auto expr = static_cast<MemberVariable*>(exp);
+		auto classToUse = expr->object ? getValue(expr->object, scope, classs)->getClass().get() : classs;
+		return arena.make<ValueNode>(resolveVariable(expr->name, classToUse, scope));
+	}
+	case ExpressionType::MemberFunctionCall: {
+		auto expr = static_cast<MemberFunctionCall*>(exp);
+		List args;
+		for (auto&& sub : expr->subexpressions) {
+			args.push_back(getValue(sub, scope, classs));
+		}
+		auto val = getValue(expr->object, scope, classs);
+		if (val->getType() != Type::Class) {
+			args.insert(args.begin(), val);
+			return arena.make<ValueNode>(callFunction(resolveVariable(expr->functionName, scope)->getFunction(), scope, args, classs));
+		}
+		auto owningClass = val->getClass();
+		return arena.make<ValueNode>(callFunction(resolveFunction(expr->functionName, owningClass.get(), scope), scope, args, owningClass));
+	}
+	case ExpressionType::Return:
+		return arena.make<ValueNode>(getValue(static_cast<Return*>(exp)->expression, scope, classs));
+		break;
+	case ExpressionType::Yeld:
+		return arena.make<ValueNode>(getValue(static_cast<Yeld*>(exp)->expression, scope, classs));
+		break;
+	case ExpressionType::FunctionCall:
+	{
+		List args;
+		auto funcExpr = static_cast<FunctionExpression*>(exp);
+
+		for (auto&& sub : funcExpr->subexpressions) {
+			args.push_back(getValue(sub, scope, classs));
+		}
+
+		if (funcExpr->function->getType() == Type::String) {
+			funcExpr->function = resolveVariable(funcExpr->function->getString(), scope);
+		}
+		if (funcExpr->function->getType() == Type::Coro) {
+			return arena.make<ValueNode>(callCoro(funcExpr->function->getCoro()));
+		}
+		return arena.make<ValueNode>(callFunction(funcExpr->function->getFunction(), scope, args, classs));
+	}
+	break;
+	case ExpressionType::Loop:
+	{
+		scope = newScope("loop", scope);
+		auto loopexp = static_cast<Loop*>(exp);
+		if (loopexp->initExpression) {
+			getValue(loopexp->initExpression, scope, classs);
+		}
+		ValuePtr returnVal = nullptr;
+		Array resultList;
+
+		auto _getValue = [&]() {
+			if (!loopexp->testExpression) {
+				return true;
+			}
+			return getValue(loopexp->testExpression, scope, classs)->getBool();
+		};
+
+		while (returnVal == nullptr && _getValue()) {
+			auto res = needsToReturn(loopexp->subexpressions, scope, classs);
+			returnVal = res.explicitReturn;
+			if (res.interrupt == LoopInterupt::Break) {
+				break;
+			}
+			if (res.lastValue != nullptr) {
+				resultList.push_back(res.lastValue);
+			}
+			if (returnVal == nullptr && loopexp->iterateExpression) {
+				getValue(loopexp->iterateExpression, scope, classs);
+			}
+		}
+		closeScope(scope);
+		if (returnVal) {
+			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
+		}
+		else {
+			return arena.make<ValueNode>(std::make_shared<Value>(resultList));
+		}
+	}
+	break;
+	case ExpressionType::ForEach:
+	{
+		std::cout << "EVALUATING FOREACH" << std::endl;
+		scope = newScope("loop", scope);
+		auto foreachExp = static_cast<Foreach*>(exp);
+		auto list = getValue(foreachExp->listExpression, scope, classs);
+		std::cout << "FOREACH list evaluated. list is " << (list ? "valid" : "null") << std::endl;
+		auto& subs = foreachExp->subexpressions;
+		ValuePtr returnVal = nullptr;
+		
+		std::vector<ValuePtr> results;
+		
+		auto handleIteration = [&](size_t idx, ValuePtr key, ValuePtr val) {
+			std::cout << "FOREACH ITERATION: idx=" << idx << std::endl;
+			if (foreachExp->iterateNames.size() == 1) {
+				scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(*val);
+			} else if (foreachExp->iterateNames.size() == 2) {
+				if (list->getType() == Type::Map) {
+					scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(*key);
+					scope->variables[foreachExp->iterateNames[1]] = std::make_shared<Value>(*val);
+				} else {
+					scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(Int(idx));
+					scope->variables[foreachExp->iterateNames[1]] = std::make_shared<Value>(*val);
+				}
+			} else if (foreachExp->iterateNames.size() == 3 && list->getType() == Type::Map) {
+				scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(Int(idx));
+				scope->variables[foreachExp->iterateNames[1]] = std::make_shared<Value>(*key);
+				scope->variables[foreachExp->iterateNames[2]] = std::make_shared<Value>(*val);
+			}
+			
+			std::cout << "CALLING needsToReturn..." << std::endl;
+			auto r = needsToReturn(subs, scope, classs);
+			std::cout << "needsToReturn RETURNED." << std::endl;
+			checkLoopInterupt = r.interrupt;
+			returnVal = r.explicitReturn;
+			if (r.lastValue) {
+				results.push_back(r.lastValue);
+			}
+		};
+
+		size_t idx = 0;
+		if (list->getType() == Type::Map) {
+			for (auto&& in : *list->getDictionary().get()) {
+				handleIteration(idx++, std::make_shared<Value>(in.first), in.second);
+				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+			}
+		} else if (list->getType() == Type::Set) {
+			for (auto&& in : *list->getSet().get()) {
+				handleIteration(idx++, nullptr, in);
+				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+			}
+		} else if (list->getType() == Type::List) {
+			for (auto&& in : list->getList()) {
+				handleIteration(idx++, nullptr, in);
+				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+			}
+		} else if (list->getType() == Type::Array) {
+			auto& arr = list->getArray();
+			switch (arr.getType()) {
+			case Type::Int: {
+				for (auto&& in : list->getStdVector<Int>()) {
+					handleIteration(idx++, nullptr, std::make_shared<Value>(in));
+					if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				}
+			} break;
+			case Type::Float: {
+				for (auto&& in : list->getStdVector<Float>()) {
+					handleIteration(idx++, nullptr, std::make_shared<Value>(in));
+					if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				}
+			} break;
+			case Type::String: {
+				for (auto&& in : list->getStdVector<std::string>()) {
+					handleIteration(idx++, nullptr, std::make_shared<Value>(in));
+					if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				}
+			} break;
+			default: break;
+			}
+		}
+		
+		closeScope(scope);
+		if (returnVal) {
+			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
+		} else {
+			// Find the common type for the array, fallback to dynamic/untyped list if heterogeneous
+			if (!results.empty()) {
+				auto firstType = results[0]->getType();
+				bool homogeneous = true;
+				for (auto& r : results) {
+					if (r->getType() != firstType) {
+						homogeneous = false;
+						break;
+					}
+				}
+				if (homogeneous) {
+					if (firstType == Type::Int) {
+						std::vector<Int> res;
+						for (auto& r : results) res.push_back(r->getInt());
+						return arena.make<ValueNode>(std::make_shared<Value>(Array(res)), ExpressionType::Value);
+					} else if (firstType == Type::Float) {
+						std::vector<Float> res;
+						for (auto& r : results) res.push_back(r->getFloat());
+						return arena.make<ValueNode>(std::make_shared<Value>(Array(res)), ExpressionType::Value);
+					} else if (firstType == Type::String) {
+						std::vector<std::string> res;
+						for (auto& r : results) res.push_back(r->getString());
+						return arena.make<ValueNode>(std::make_shared<Value>(Array(res)), ExpressionType::Value);
+					}
+				}
+				// Default to List if heterogeneous or complex type
+				List lst;
+				for (auto& r : results) lst.push_back(r);
+				return arena.make<ValueNode>(std::make_shared<Value>(lst), ExpressionType::Value);
+			}
+			return arena.make<ValueNode>(std::make_shared<Value>(Array(std::vector<Int>{})), ExpressionType::Value);
+		}
+	}
+	break;
+	case ExpressionType::IfElse:
+	{
+		ValuePtr returnVal = nullptr;
+		ValuePtr lastEval = nullptr;
+		for (auto& express : static_cast<IfElse*>(exp)->states) {
+			std::cout << "IFELSE TEST EXPR: " << (express.testExpression ? "YES" : "NO") << std::endl;
+			if (express.testExpression) {
+				std::cout << "TEST RESULT: " << getValue(express.testExpression, scope, classs)->getBool() << std::endl;
+			}
+			std::cout << "SUBEXPRS SIZE: " << express.subexpressions.size() << std::endl;
+			if (!express.testExpression || getValue(express.testExpression, scope, classs)->getBool()) {
+				scope = newScope("ifelse", scope);
+				auto r = needsToReturn(express.subexpressions, scope, classs);
+				checkLoopInterupt = r.interrupt;
+				returnVal = r.explicitReturn;
+				lastEval = r.lastValue;
+				closeScope(scope);
+				break;
+			}
+		}
+		if (returnVal) {
+			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
+		}
+		else if (lastEval) {
+			return arena.make<ValueNode>(lastEval, ExpressionType::Value);
+		}
+		else {
+			return returnDefExpr();
+			//return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
+		}
+	}
+	break;
+	case ExpressionType::Block:
+	{
+		scope = newScope("block", scope);
+		auto r = needsToReturn(static_cast<BlockExpression*>(exp)->subexpressions, scope, classs);
+		checkLoopInterupt = r.interrupt;
+		closeScope(scope);
+		if (r.explicitReturn) {
+			return arena.make<ValueNode>(r.explicitReturn, ExpressionType::Return);
+		}
+		else if (r.lastValue) {
+			return arena.make<ValueNode>(r.lastValue, ExpressionType::Value);
+		}
+		else {
+			return returnDefExpr();
+		}
+	}
+	break;
+	default:
+		break;
+	}
+	auto val = static_cast<ValueNode*>(exp);
+	//if (val->value->getType() == Type::Coro) {
+	//	auto coroExpr = val->value->getCoro();
+	//	return arena.make<ValueNode>(callCoro(coroExpr));
+	//}
+	return arena.make<ValueNode>(val, ExpressionType::Value);
+}
+
+// evaluate an expression from tokens
+ValuePtr IkigaiScriptInterpreter::getValue(const std::vector<std::string_view>& strings, ScopePtr scope, Class* classs) {
+	return getValue(parser->getExpression(strings, scope, classs), scope, classs);
+}
+
+// evaluate an expression from ExpressionPtr
+ValuePtr IkigaiScriptInterpreter::getValue(ExpressionPtr exp, ScopePtr scope, Class* classs) {
+	if (exp == nullptr) {
+		std::cout << "getValue called with null exp!" << std::endl;
+		return nullptr;
+	}
+	std::cout << "getValue: type=" << (int)exp->type << " line=" << exp->line << std::endl;
+	// copy the expression so that we don't lose it when we consolidate
+	return static_cast<ValueNode*>(consolidated(exp, scope, classs))->value;
+}
+
+// since the 'else' block in  an if/elfe is technically in a different scope
+// ifelse espressions are not closed immediately and instead left dangling
+// until the next expression is anything other than an 'else' or the else is unconditional
+//bool IkigaiScriptInterpreter::closeDanglingIfExpression() {
+//	if (currentExpression && currentExpression->type == ExpressionType::IfElse) {
+//		if (currentExpression->parent) {
+//			currentExpression = currentExpression->parent;
+//		}
+//		else {
+//			getValue(currentExpression, parseScope, nullptr);
+//			currentExpression = nullptr;
+//		}
+//		return true;
+//	}
+//	return false;
+//}
+
+
+ScopePtr IkigaiScriptInterpreter::newScope(const std::string& name, ScopePtr scope) {
+	// if the scope exists we just use it as is
+	auto iter = scope->scopes.find(name);
+	if (iter != scope->scopes.end()) {
+		return iter->second;
+	}
+	else {
+		return scope->insertScope(make_shared<Scope>(name, scope));
+	}
+}
+
+ScopePtr IkigaiScriptInterpreter::insertScope(ScopePtr existing, ScopePtr parent) {
+	existing->parent = parent;
+	return parent->insertScope(existing);
+}
+
+void IkigaiScriptInterpreter::closeScope(ScopePtr& scope) {
+	if (scope->parent) {
+		if (scope->isClassScope) {
+			scope = scope->parent;
+		}
+		else {
+			auto name = scope->name;
+			scope->functions.clear();
+			scope->variables.clear();
+			scope->scopes.clear();
+			scope = scope->parent;
+			scope->scopes.erase(name);
+		}
+	}
+}
+
+ScopePtr IkigaiScriptInterpreter::newClassScope(const std::string& name, ScopePtr scope) {
+	auto ref = newScope(name, scope);
+	ref->isClassScope = true;
+	return ref;
+}
+
+
+IkigaiScriptInterpreter::~IkigaiScriptInterpreter() { delete parser; }
+bool IkigaiScriptInterpreter::evaluate(std::string_view script) { return parser->evaluate(script); }
+bool IkigaiScriptInterpreter::evaluateFile(const std::string& path) { return parser->evaluateFile(path); }
+bool IkigaiScriptInterpreter::readLine(std::string_view text, ScopePtr scope) { return parser->readLine(text, scope); }
+bool IkigaiScriptInterpreter::readLine(std::string_view text) { return parser->readLine(text); }
+bool IkigaiScriptInterpreter::evaluate(std::string_view script, ScopePtr scope) { return parser->evaluate(script, scope); }
+bool IkigaiScriptInterpreter::evaluateFile(const std::string& path, ScopePtr scope) { return parser->evaluateFile(path, scope); }
+void IkigaiScriptInterpreter::clearState() { parser->clearState(); }
+
+IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilegeFlags priv) : allowedModulePrivileges(priv) {
+	parser = new Parser(this);
+	createStandardLibrary();
+	if (priv) { createOptionalModules(); }
+}
+IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilege priv) : IkigaiScriptInterpreter(static_cast<ModulePrivilegeFlags>(priv)) {}
+IkigaiScriptInterpreter::IkigaiScriptInterpreter() : IkigaiScriptInterpreter(ModulePrivilegeFlags()) {}
+
