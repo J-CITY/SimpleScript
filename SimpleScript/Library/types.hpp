@@ -256,7 +256,7 @@ namespace IkigaiScript {
     template <> inline std::vector<void*>& Array::getStdVector<void*>() { return value.asPointer; }
     template <> inline std::vector<std::string>& Array::getStdVector<std::string>() { return value.asString; }
 
-using Dictionary = std::unordered_map<size_t, ValuePtr>;
+    using Dictionary = std::unordered_map<size_t, ValuePtr>;
     using DictionaryRef = std::shared_ptr<Dictionary>;
 
     using Set = std::unordered_set<ValuePtr>;
@@ -342,6 +342,8 @@ using Dictionary = std::unordered_map<size_t, ValuePtr>;
         bool variableArgsParam = false;
         bool isCoro = false;
         std::optional<TypeDescriptor> variableArgsParamType;
+        std::vector<std::string> genericParams;
+        std::string genericBodyRaw;
 
         FunctionBodyVariant body;
 

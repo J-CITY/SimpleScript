@@ -158,20 +158,8 @@ enum class ParseIntState
 	Exp
 };
 
-std::vector<Token> Lexer::Tokenizer(std::string_view input) {
-	std::vector<Token> ret;
-	if (input.empty()) {
-		return ret;
-	}
-	bool isComment = false;
-
-	size_t pos = 0;
-	while (pos < input.size()) {
-		if (contains(WhitespaceChars, input[pos])) {
-			pos++;
-			continue;
-		}
-
+namespace {
+	bool tryParseIdentifier(std::string_view input, size_t& pos, std::vector<Token>& ret) {
 		if (isStartIdentChar(input[pos])) { //ident
 			auto startPos = pos;
 			while (pos < input.size() && isIdentChar(input[pos])) {
@@ -179,13 +167,16 @@ std::vector<Token> Lexer::Tokenizer(std::string_view input) {
 			}
 			auto token = input.substr(startPos, pos - startPos);
 			ret.push_back({ token, keyWords.contains(token) ? TokenType::KeyWord : TokenType::Identifire });
-			continue;
+			return true;
 		}
+		return false;
+	}
 
+	bool tryParseNumber(std::string_view input, size_t& pos, std::vector<Token>& ret) {
 		if (contains(NumStartChars, input[pos]) || (
 			(input[pos] == '-' || input[pos] == '+') && contains(NumStartChars, input[pos + 1])
 			&& ((ret.size() == 0) || contains(MultiCharTokenStartChars, ret.back().token.back())))
-		) {//num
+		) {
 			ParseIntState state = ParseIntState::None;
 			auto startPos = pos;
 			auto type = TokenType::NumInt;
@@ -193,126 +184,90 @@ std::vector<Token> Lexer::Tokenizer(std::string_view input) {
 				switch (state)
 				{
 				case ParseIntState::None:
-					{
-						if (input[pos] == '+' || input[pos] == '-') {
-							state = ParseIntState::StartUnary;
-							break;
-						}
-						else if (isNumChar(input[pos])) {
-							state = ParseIntState::Num;
-							break;
-						}
-						throw;
+					if (input[pos] == '+' || input[pos] == '-') {
+						state = ParseIntState::StartUnary;
 					}
+					else if (isNumChar(input[pos])) {
+						state = ParseIntState::Num;
+					}
+					else throw Exception("Invalid number format");
 					break;
 				case ParseIntState::StartUnary: 
-					{
-						if (isNumChar(input[pos])) {
-							state = ParseIntState::Num;
-							break;
-						}
-						throw;
+					if (isNumChar(input[pos])) {
+						state = ParseIntState::Num;
 					}
+					else throw Exception("Invalid number format");
 					break;
 				case ParseIntState::Num:
-					{
-						if (isNumChar(input[pos])) {
-							break;
-						}
-						if (input[pos] == 'e' || input[pos] == 'E') {
-							state = ParseIntState::ExpSign;
-							type = TokenType::NumFloat;
-							break;
-						}
-						else if (input[pos] == 'x' || input[pos] == 'X') {
-							if (startPos == pos-1 && input[pos-1] == '0') {
-								state = ParseIntState::Hex;
-								type = TokenType::NumHex;
-								break;
-							}
-							throw;
-						}
-						else if (input[pos] == 'b' || input[pos] == 'B') {
-							if (startPos == pos - 1 && input[pos - 1] == '0') {
-								state = ParseIntState::Bin;
-								type = TokenType::NumBin;
-								break;
-							}
-							throw;
-						}
-						else if (input[pos] == '.') {
-							state = ParseIntState::Float;
-							type = TokenType::NumFloat;
-							break;
-						}
-						throw;
+					if (isNumChar(input[pos])) {}
+					else if (input[pos] == 'e' || input[pos] == 'E') {
+						state = ParseIntState::ExpSign;
+						type = TokenType::NumFloat;
 					}
+					else if (input[pos] == 'x' || input[pos] == 'X') {
+						if (startPos == pos-1 && input[pos-1] == '0') {
+							state = ParseIntState::Hex;
+							type = TokenType::NumHex;
+						}
+						else throw Exception("Invalid number format");
+					}
+					else if (input[pos] == 'b' || input[pos] == 'B') {
+						if (startPos == pos - 1 && input[pos - 1] == '0') {
+							state = ParseIntState::Bin;
+							type = TokenType::NumBin;
+						}
+						else throw Exception("Invalid number format");
+					}
+					else if (input[pos] == '.') {
+						state = ParseIntState::Float;
+						type = TokenType::NumFloat;
+					}
+					else throw Exception("Invalid number format");
 					break;
 				case ParseIntState::ExpSign:
-					{
-						if (input[pos] == '+' || input[pos] == '-') {
-							break;
-						}
-						if (isNumChar(input[pos])) {
-							state = ParseIntState::Exp;
-							break;
-						}
-						throw;
+					if (input[pos] == '+' || input[pos] == '-') {}
+					else if (isNumChar(input[pos])) {
+						state = ParseIntState::Exp;
 					}
+					else throw Exception("Invalid number format");
 					break;
 				case ParseIntState::Exp:
-				{
-					if (isNumChar(input[pos])) {
-						break;
-					}
-					throw;
-				}
-				break;
+					if (!isNumChar(input[pos])) throw Exception("Invalid number format");
+					break;
 				case ParseIntState::Float:
-					{
-						if (isNumChar(input[pos])) {
-							break;
-						}
-						if (input[pos] == 'e' || input[pos] == 'E') {
-							state = ParseIntState::ExpSign;
-							break;
-						}
-						throw;
+					if (isNumChar(input[pos])) {}
+					else if (input[pos] == 'e' || input[pos] == 'E') {
+						state = ParseIntState::ExpSign;
 					}
+					else throw Exception("Invalid number format");
 					break;
 				case ParseIntState::Bin:
-					{
-						if (isBinNumChar(input[pos])) {
-							break;
-						}
-						throw;
-					}
+					if (!isBinNumChar(input[pos])) throw Exception("Invalid number format");
 					break;
 				case ParseIntState::Hex: 
-					{
-						if (isHexNumChar(input[pos])) {
-							break;
-						}
-						throw;
-					}
+					if (!isHexNumChar(input[pos])) throw Exception("Invalid number format");
 					break;
 				}
-
 				pos++;
 			}
-
-
-			//if (input.size() > startPos + 1 && input[startPos] == '0' && input[startPos + 1] == '0') {
-			//	throw;
-			//}
-			//
-			//if (input.size() > startPos + 2 && 
-			//	(input[startPos] == '+' || input[startPos] == '1') && input[startPos + 1] == '0' && input[startPos + 2] == '0') {
-			//	throw;
-			//}
-
 			ret.push_back({ input.substr(startPos, pos - startPos), type });
-			continue;
+			return true;
+		}
+		return false;
+	}
+
+	bool tryParseCompoundOperator(std::string_view input, size_t& pos, std::vector<Token>& ret, bool& isComment) {
+		auto remaining = input.substr(pos);
+		if (remaining.starts_with("..")) {
+			ret.push_back({ remaining.substr(0, 2), TokenType::Operator });
+			pos += 2;
+			return true;
+		}
+
+		if (remaining.starts_with(">>>")) {
+			ret.push_back({ remaining.substr(0, 3), TokenType::Operator });
+			pos += 3;
+			return true;
 		}
 
 		if (contains(MultiCharTokenStartChars, input[pos])) {
@@ -323,18 +278,19 @@ std::vector<Token> Lexer::Tokenizer(std::string_view input) {
 				if (input[startPos] == '/' && input[startPos + 1] == '/') {
 					isComment = true;
 					while (pos < input.size()) {
-						if (input[pos] == '\n') {
-							break;
-						}
+						if (input[pos] == '\n') break;
 						pos++;
 					}
-					continue;
+					return true;
 				}
 			}
 			ret.push_back({ input.substr(startPos, pos - startPos), TokenType::Operator });
-			continue;
+			return true;
 		}
+		return false;
+	}
 
+	bool tryParseStringOrChar(std::string_view input, size_t& pos, std::vector<Token>& ret) {
 		if (contains(SpecialChars, input[pos])) {
 			auto startPos = pos;
 			if (input[startPos] == '"') {
@@ -367,11 +323,9 @@ std::vector<Token> Lexer::Tokenizer(std::string_view input) {
 					}
 					pos++;
 				}
-				if (!endStr) {
-					throw Exception("Unterminated string");
-				}
+				if (!endStr) throw Exception("Unterminated string");
 				ret.push_back({ input.substr(startPos, pos - startPos), TokenType::String });
-				continue;
+				return true;
 			}
 			else if (input[startPos] == '\'') {
 				pos++;
@@ -386,16 +340,38 @@ std::vector<Token> Lexer::Tokenizer(std::string_view input) {
 					}
 					pos++;
 				}
-				if (!endStr) {
-					throw Exception("Unterminated char literal");
-				}
+				if (!endStr) throw Exception("Unterminated char literal");
 				ret.push_back({ input.substr(startPos, pos - startPos), TokenType::Char });
-				continue;
+				return true;
 			}
 			pos++;
 			ret.push_back({ input.substr(startPos, pos - startPos), TokenType::SpecSymbol });
+			return true;
+		}
+		return false;
+	}
+}
+
+std::vector<Token> Lexer::Tokenizer(std::string_view input) {
+	std::vector<Token> ret;
+	if (input.empty()) return ret;
+
+	bool isComment = false;
+	size_t pos = 0;
+
+	while (pos < input.size()) {
+		if (contains(WhitespaceChars, input[pos])) {
+			pos++;
 			continue;
 		}
+
+		if (tryParseIdentifier(input, pos, ret)) continue;
+		if (tryParseNumber(input, pos, ret)) continue;
+		if (tryParseCompoundOperator(input, pos, ret, isComment)) continue;
+		if (tryParseStringOrChar(input, pos, ret)) continue;
+		
+		// If nothing matches, just advance (fallback)
+		pos++;
 	}
 
 	return ret;

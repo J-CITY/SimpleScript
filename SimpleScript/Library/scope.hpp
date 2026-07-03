@@ -21,6 +21,7 @@ namespace IkigaiScript {
         std::unordered_map<std::string, FunctionRef> functions;
         std::unordered_map<std::string, std::list<FunctionRef>> operators;
         bool isClassScope = false;
+        bool isGenericScope = false;
         
         std::vector<Metadata> scopeMetadata;
         std::unordered_map<std::string, std::vector<Metadata>> membersMetadata;

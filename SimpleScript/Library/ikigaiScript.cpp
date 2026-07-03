@@ -40,32 +40,25 @@ bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
 }
 
 bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
-	std::cout << "checkConvertTypes t1=" << (int)t1.type << " t2=" << (int)t2.type << " t1.isInit=" << t1.isInit << " t1.isDynamic=" << t1.isDynamic << std::endl;
 	if (!t1.isInit && t1.isDynamic) {
-		std::cout << "checkConvertTypes dyn" << std::endl;
 		return true;
 	}
 
 	if (t1.type == Type::Float && (t2.type == Type::Int || t2.type == Type::Bool)) {
-		std::cout << "checkConvertTypes float" << std::endl;
 		return true;
 	}
 	if (t1.type == Type::Int && t2.type == Type::Bool) {
-		std::cout << "checkConvertTypes int/bool" << std::endl;
 		return true;
 	}
 
 	if (t1.isNullable && t2.type == Type::Null) {
-		std::cout << "checkConvertTypes null" << std::endl;
 		return true;
 	}
 
 	auto res = t1.type == t2.type;
-	std::cout << "checkConvertTypes res=" << res << std::endl;
 
 	//class check
 	if (t1.type == Type::Class && res) {
-		std::cout << "checkConvertTypes class" << std::endl;
 		auto& className1 = std::get<std::string>(t1.subtype.value());
 		auto& className2 = std::get<std::string>(t2.subtype.value());
 		if (className1.empty() || className2.empty()) {
@@ -79,27 +72,22 @@ bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
 
 	//containers check
 	if (res && isContainer(t1.type)) {
-		std::cout << "checkConvertTypes container" << std::endl;
 		//same container with dynamic content
 		if (!t1.subtype && !t2.subtype) {
 			return true;
 		}
 		bool b = true;
 		if (t1.type == Type::Map) {
-			std::cout << "checkConvertTypes map" << std::endl;
 			if (!t1.subtype2.has_value() || !t2.subtype2.has_value()) {
-				std::cout << "checkConvertTypes CRASH AVERTED!" << std::endl;
 				return false;
 			}
 			checkConvertTypes(*t1.subtype2.value(), *t2.subtype2.value());
 		}
 		if (!t1.subtype.has_value() || !t2.subtype.has_value()) {
-			std::cout << "checkConvertTypes CRASH AVERTED 2!" << std::endl;
 			return false;
 		}
 		return b && checkConvertTypes(*std::get<std::shared_ptr<TypeDescriptor>>(t1.subtype.value()), *std::get<std::shared_ptr<TypeDescriptor>>(t2.subtype.value()));
 	}
-	std::cout << "checkConvertTypes returning " << res << std::endl;
 	return res;
 }
 
@@ -243,7 +231,6 @@ Module* IkigaiScriptInterpreter::getOptionalModule(const std::string& name) {
 void IkigaiScriptInterpreter::createStandardLibrary() {
 	newModule("StandardLib"s, 0, {
 		{"=", [this](const List& args) {
-			std::cout << "ASSIGNMENT EVALUATION START" << std::endl;
 			if (args.size() == 1 || args.size() > 2) {
 				throw Exception("Must have 0 or 2 arguments");
 			}
@@ -257,17 +244,13 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			//if (!args[0]->typeDescriptor.isNullable && args[1]->typeDescriptor.type == Type::Null) {
 			//	throw Exception("Can not assign null to variable");
 			//}
-			std::cout << "ASSIGNMENT EVALUATION CHECK 1" << std::endl;
 			if (!args[1]->typeDescriptor.isInit) {
 				throw Exception("Use not init variable in expression");
 			}
-			std::cout << "ASSIGNMENT EVALUATION CHECK 2" << std::endl;
 			if (!checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor)) {
 				throw Exception("Cannot convert types");
 			}
-			std::cout << "ASSIGNMENT EVALUATION DOING COPY" << std::endl;
 			*args[0] = *args[1];
-			std::cout << "ASSIGNMENT EVALUATION DONE COPY" << std::endl;
 			return args[0];
 		}},
 
@@ -1588,6 +1571,97 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 }
 
 ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, const List& args, Class* classs) {
+	if (!fnc->genericParams.empty()) {
+		std::map<std::string, std::string> genericTypeMap;
+		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
+			auto argName = fnc->argNames[i];
+			if (i < args.size()) {
+				auto typeDesc = fnc->types[argName];
+				if (typeDesc.type == Type::Class && typeDesc.subtype) {
+					auto genName = std::get<std::string>(*typeDesc.subtype);
+                    if (std::find(fnc->genericParams.begin(), fnc->genericParams.end(), genName) != fnc->genericParams.end()) {
+					std::string argTypeName;
+					switch (args[i]->getType()) {
+						case Type::Int: argTypeName = "Int"; break;
+						case Type::Float: argTypeName = "Float"; break;
+						case Type::String: argTypeName = "String"; break;
+						case Type::Bool: argTypeName = "Bool"; break;
+						case Type::List: argTypeName = "List"; break;
+						default: argTypeName = "Dynamic"; break;
+					}
+					genericTypeMap[genName] = argTypeName;
+                    }
+				}
+			}
+		}
+		
+		std::string newName = fnc->name + "__";
+		for (size_t i = 0; i < fnc->genericParams.size(); ++i) {
+			newName += genericTypeMap[fnc->genericParams[i]];
+			if (i + 1 < fnc->genericParams.size()) newName += "_";
+		}
+
+		auto iter = scope->functions.find(newName);
+		if (iter != scope->functions.end()) {
+			return callFunction(iter->second, scope, args, classs);
+		}
+
+		std::string newBody = fnc->genericBodyRaw;
+		for (auto& param : fnc->genericParams) {
+			std::string search = param;
+			std::string replace = genericTypeMap[param];
+			size_t pos = 0;
+			while ((pos = newBody.find(search, pos)) != std::string::npos) {
+				bool leftOk = (pos == 0 || !isalnum(newBody[pos - 1]));
+				bool rightOk = (pos + search.length() == newBody.length() || !isalnum(newBody[pos + search.length()]));
+				if (leftOk && rightOk) {
+					newBody.replace(pos, search.length(), replace);
+					pos += replace.length();
+				} else {
+					pos += search.length();
+				}
+			}
+		}
+
+		std::string sig = "fun " + newName + "(";
+		auto typeToStr = [&](TypeDescriptor td) -> std::string {
+			if (td.type == Type::Class && td.subtype) {
+				auto s = std::get<std::string>(*td.subtype);
+				if (std::find(fnc->genericParams.begin(), fnc->genericParams.end(), s) != fnc->genericParams.end()) {
+					return genericTypeMap[s];
+				}
+				return s;
+			}
+			switch(td.type) {
+				case Type::Int: return "Int";
+				case Type::Float: return "Float";
+				case Type::String: return "String";
+				case Type::Bool: return "Bool";
+				case Type::List: return "List";
+				case Type::Array: return "Array";
+				case Type::Set: return "Set";
+				case Type::Map: return "Map";
+				default: return "Dynamic";
+			}
+		};
+
+		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
+			sig += fnc->argNames[i] + ": ";
+			sig += typeToStr(fnc->types[fnc->argNames[i]]);
+			if (i + 1 < fnc->argNames.size()) sig += ",";
+		}
+		sig += ")";
+		if (fnc->returnType) {
+			sig += ": " + typeToStr(*fnc->returnType);
+		}
+		sig += " { " + newBody + " }";
+
+		Parser p(this);
+		p.evaluate(sig);
+
+		return callFunction(resolveFunction(newName, scope), scope, args, classs);
+	}
+
 	switch (fnc->getBodyType()) {
 	case FunctionBodyType::Subexpressions: {
 		auto& subexpressions = get<std::vector<ExpressionPtr>>(fnc->body);
@@ -1987,6 +2061,7 @@ TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name
 	}
 	else {
 		desc.type = Type::Class;
+		desc.subtype = name;
 	}
 
 	auto initialScope = scope;
@@ -2060,7 +2135,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	//}
 	//data_is_ready_ = false;
 	
-	std::cout << exp->line << std::endl;
 
 	LoopInterupt checkLoopInterupt = LoopInterupt::None;
 	auto returnDefExpr = [&checkLoopInterupt, this]() -> ExpressionPtr {
@@ -2074,9 +2148,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	switch (exp->type) {
 	case ExpressionType::DefineVar: {
 		auto def = static_cast<DefineVar*>(exp);
-		std::cout << "DEFINE VAR START" << std::endl;
-		std::cout << "DEFINE VAR PTR: " << def->defineExpression << std::endl;
-		std::cout << "DEFINE VAR: " << def->name << " TYPE: " << (int)def->defineExpression->type << std::endl;
 		auto val = getValue(def->defineExpression, scope, classs);
 		scope->variables[def->name] = val;
 		return arena.make<ValueNode>(val);
@@ -2138,7 +2209,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			getValue(loopexp->initExpression, scope, classs);
 		}
 		ValuePtr returnVal = nullptr;
-		Array resultList;
+		List resultList;
 
 		auto _getValue = [&]() {
 			if (!loopexp->testExpression) {
@@ -2171,18 +2242,15 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	break;
 	case ExpressionType::ForEach:
 	{
-		std::cout << "EVALUATING FOREACH" << std::endl;
 		scope = newScope("loop", scope);
 		auto foreachExp = static_cast<Foreach*>(exp);
 		auto list = getValue(foreachExp->listExpression, scope, classs);
-		std::cout << "FOREACH list evaluated. list is " << (list ? "valid" : "null") << std::endl;
 		auto& subs = foreachExp->subexpressions;
 		ValuePtr returnVal = nullptr;
 		
 		std::vector<ValuePtr> results;
 		
 		auto handleIteration = [&](size_t idx, ValuePtr key, ValuePtr val) {
-			std::cout << "FOREACH ITERATION: idx=" << idx << std::endl;
 			if (foreachExp->iterateNames.size() == 1) {
 				scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(*val);
 			} else if (foreachExp->iterateNames.size() == 2) {
@@ -2199,9 +2267,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 				scope->variables[foreachExp->iterateNames[2]] = std::make_shared<Value>(*val);
 			}
 			
-			std::cout << "CALLING needsToReturn..." << std::endl;
 			auto r = needsToReturn(subs, scope, classs);
-			std::cout << "needsToReturn RETURNED." << std::endl;
 			checkLoopInterupt = r.interrupt;
 			returnVal = r.explicitReturn;
 			if (r.lastValue) {
@@ -2293,11 +2359,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		ValuePtr returnVal = nullptr;
 		ValuePtr lastEval = nullptr;
 		for (auto& express : static_cast<IfElse*>(exp)->states) {
-			std::cout << "IFELSE TEST EXPR: " << (express.testExpression ? "YES" : "NO") << std::endl;
 			if (express.testExpression) {
-				std::cout << "TEST RESULT: " << getValue(express.testExpression, scope, classs)->getBool() << std::endl;
 			}
-			std::cout << "SUBEXPRS SIZE: " << express.subexpressions.size() << std::endl;
 			if (!express.testExpression || getValue(express.testExpression, scope, classs)->getBool()) {
 				scope = newScope("ifelse", scope);
 				auto r = needsToReturn(express.subexpressions, scope, classs);
@@ -2356,10 +2419,8 @@ ValuePtr IkigaiScriptInterpreter::getValue(const std::vector<std::string_view>& 
 // evaluate an expression from ExpressionPtr
 ValuePtr IkigaiScriptInterpreter::getValue(ExpressionPtr exp, ScopePtr scope, Class* classs) {
 	if (exp == nullptr) {
-		std::cout << "getValue called with null exp!" << std::endl;
 		return nullptr;
 	}
-	std::cout << "getValue: type=" << (int)exp->type << " line=" << exp->line << std::endl;
 	// copy the expression so that we don't lose it when we consolidate
 	return static_cast<ValueNode*>(consolidated(exp, scope, classs))->value;
 }

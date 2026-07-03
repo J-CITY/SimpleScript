@@ -88,7 +88,7 @@ namespace IkigaiScript {
 		ValuePtr function;
 		std::vector<ExpressionPtr> subexpressions;
 
-				FunctionExpression(FunctionRef fnc, ExpressionPtr par) : Expression(ExpressionType::FunctionDef, par), function(new Value(fnc)) {}
+		FunctionExpression(FunctionRef fnc, ExpressionPtr par) : Expression(ExpressionType::FunctionDef, par), function(new Value(fnc)) {}
 		FunctionExpression(ValuePtr fncvalue) :Expression(ExpressionType::FunctionCall), function(fncvalue) {}
 
 
@@ -355,6 +355,13 @@ namespace IkigaiScript {
 			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr) {}
 
 		
+	};
+
+	struct NamedArgumentExpression : public Expression {
+		std::string name;
+		ExpressionPtr expression;
+		NamedArgumentExpression(const std::string& n, ExpressionPtr expr, ExpressionPtr par = nullptr) 
+			: Expression(ExpressionType::NamedArgument, par), name(n), expression(expr) {}
 	};
 
 	struct ValueNode : public Expression {

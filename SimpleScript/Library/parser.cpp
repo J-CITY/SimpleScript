@@ -142,6 +142,14 @@ ExpressionPtr Parser::parseInterpolatedString(std::string val, ScopePtr scope, C
 
 // recursively build an expression tree from a list of tokens
 ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, ScopePtr scope, Class* classs) {
+	auto parseArg = [&](std::vector<std::string_view> sub) -> ExpressionPtr {
+		if (sub.size() >= 3 && isVarOrFuncToken(sub[0]) && sub[1] == "=") {
+			std::string name = std::string(sub[0]);
+			std::vector<std::string_view> rhs(sub.begin() + 2, sub.end());
+			return interpreter->arena.make<NamedArgumentExpression>(name, getExpression(std::move(rhs), scope, classs));
+		}
+		return getExpression(std::move(sub), scope, classs);
+	};
 	ExpressionPtr root = nullptr;
 	size_t i = 0;
 	while (i < strings.size()) {
@@ -222,7 +230,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 										}
 									}
 								}
-								rootExpression->subexpressions.push_back(getExpression(move(minisub), scope, classs));
+								rootExpression->subexpressions.push_back(parseArg(std::move(minisub)));
 							}
 							currExpression->subexpressions.push_back(root);
 							root = prev;
@@ -393,7 +401,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				while (nestLayers > 0 && ++i < strings.size()) {
 					if (nestLayers == 1 && strings[i] == ",") {
 						if (minisub.size()) {
-							static_cast<FunctionExpression*>(cur)->subexpressions.push_back(getExpression(move(minisub), scope, classs));
+							static_cast<FunctionExpression*>(cur)->subexpressions.push_back(parseArg(std::move(minisub)));
 							minisub.clear();
 						}
 					}
@@ -403,7 +411,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 						}
 						else {
 							if (minisub.size()) {
-								static_cast<FunctionExpression*>(cur)->subexpressions.push_back(getExpression(move(minisub), scope, classs));
+								static_cast<FunctionExpression*>(cur)->subexpressions.push_back(parseArg(std::move(minisub)));
 								minisub.clear();
 							}
 						}
@@ -535,7 +543,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 							}
 							else {
 								if (minisub.size()) {
-									static_cast<FunctionExpression*>(cur)->subexpressions.push_back(getExpression(move(minisub), scope, classs));
+									static_cast<FunctionExpression*>(cur)->subexpressions.push_back(parseArg(std::move(minisub)));
 									minisub.clear();
 								}
 							}
@@ -605,7 +613,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				while (nestLayers > 0 && ++i < strings.size()) {
 					if (nestLayers == 1 && strings[i] == ",") {
 						if (minisub.size()) {
-							static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(getExpression(move(minisub), scope, classs));
+							static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(parseArg(std::move(minisub)));
 							minisub.clear();
 							addedArgs = true;
 						}
@@ -616,7 +624,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 						}
 						else {
 							if (minisub.size()) {
-								static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(getExpression(move(minisub), scope, classs));
+								static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(parseArg(std::move(minisub)));
 								minisub.clear();
 								addedArgs = true;
 							}
@@ -818,9 +826,7 @@ void Parser::parse(std::string_view token) {
 		}
 		else if (token == ";") {
 			if (currentExpression) {
-				std::cout << "SEMICOLON: Evaluating currentExpression of type " << (int)currentExpression->type << std::endl;
 			} else {
-				std::cout << "SEMICOLON: currentExpression is null" << std::endl;
 			}
 			clearParseStacks();
 		}
@@ -853,19 +859,14 @@ void Parser::parse(std::string_view token) {
 						isForeach = true;
 						auto newexpr = interpreter->arena.make<Foreach>(loop->parent);
 						
-						std::cout << "FOREACH: Before namesTokens. exprs[0].size()=" << exprs[0].size() << std::endl;
 						std::vector<std::string_view> namesTokens(exprs[0].begin(), it);
 						std::vector<std::string_view> listTokens(it + 1, exprs[0].end());
-						std::cout << "FOREACH: namesTokens size=" << namesTokens.size() << std::endl;
 						for (auto& n : namesTokens) {
 							if (n != ",") {
-								std::cout << "FOREACH: pushing name=" << std::string(n) << std::endl;
 								newexpr->iterateNames.push_back(std::string(n));
 							}
 						}
-						std::cout << "ABOUT TO CALL getExpression for LoopCall. listTokens size: " << listTokens.size() << std::endl;
 						newexpr->listExpression = getExpression(listTokens, parseScope, nullptr);
-						std::cout << "getExpression returned." << std::endl;
 						
 						if (loop->parent) {
 							loop->parent->replaceChild(loop, newexpr);
@@ -1010,12 +1011,9 @@ void Parser::parse(std::string_view token) {
 			clearParseStacks();
 			// we clear before evaluating lines so any exceptions can clear the offending code
 			if (!currentExpression) {
-				std::cout << "SEMICOLON ReadLine: Evaluating line directly" << std::endl;
 				interpreter->getValue(line, parseScope, nullptr);
-				std::cout << "SEMICOLON ReadLine: getValue returned" << std::endl;
 			}
 			else {
-				std::cout << "SEMICOLON ReadLine: Pushing line to currentExpression of type " << (int)currentExpression->type << std::endl;
 				currentExpression->push_back(getExpression(line, parseScope, nullptr));
 			}
 
@@ -1182,7 +1180,6 @@ void Parser::parse(std::string_view token) {
 				currentExpression->push_back(interpreter->arena.make<DefineVar>(std::string(name), defineExpr));
 			}
 			else {
-				std::cout << "ABOUT TO CREATE DefineVar for " << name << ". defineExpr is: " << defineExpr << std::endl;
 				auto resValue = interpreter->getValue(interpreter->arena.make<DefineVar>(std::string(name), defineExpr), parseScope, nullptr);
 				if (!tDescriptor.isDynamic && !checkConvertTypes(tDescriptor, resValue->typeDescriptor)) {
 					throw TypeConvertError(tDescriptor, resValue->typeDescriptor);
@@ -1282,6 +1279,25 @@ void Parser::parse(std::string_view token) {
 			auto fncName = parseStrings.front();
 			parseStrings.erase(parseStrings.begin());
 
+			std::vector<std::string> genericParams;
+			if (!parseStrings.empty() && parseStrings.front() == "<") {
+				parseStrings.erase(parseStrings.begin()); // remove '<'
+				while (!parseStrings.empty() && parseStrings.front() != ">") {
+					if (parseStrings.front() != ",") {
+						genericParams.push_back(std::string(parseStrings.front()));
+						// Register temporary generic scope
+						auto genScope = std::make_shared<Scope>(interpreter);
+						genScope->name = std::string(parseStrings.front());
+						genScope->isGenericScope = true;
+						parseScope->scopes[genScope->name] = genScope;
+					}
+					parseStrings.erase(parseStrings.begin());
+				}
+				if (!parseStrings.empty() && parseStrings.front() == ">") {
+					parseStrings.erase(parseStrings.begin()); // remove '>'
+				}
+			}
+
 			std::vector<std::string> args;
 			std::map<std::string, TypeDescriptor> types;
 			std::map<std::string, ExpressionPtr> defValues;
@@ -1357,7 +1373,9 @@ void Parser::parse(std::string_view token) {
 					}
 					if (hasDefValue) {
 						state = ParseFuncArgs::Expression;
-					}
+					} else {
+                        state = ParseFuncArgs::Arg;
+                    }
 				}
 				else if (state == ParseFuncArgs::Expression) {
 					std::vector<std::string_view> exprs = {};
@@ -1393,6 +1411,8 @@ void Parser::parse(std::string_view token) {
 				(isOperator ? 
 					interpreter->newOperator(std::string(fncName), parseScope, args, types, defValues) : 
 					interpreter->newFunction(std::string(fncName), parseScope, args, types, defValues));
+			
+			newfunc->genericParams = genericParams;
 
 			if (parseState == ParseState::CoroArgs) {
 				if (isConstructor || isOperator) {
@@ -1439,7 +1459,7 @@ void Parser::parse(std::string_view token) {
 				if (parseStrings.empty()) {
 					throw;
 				}
-				if (parseStrings[0] != ":") {
+				if (parseStrings[0] == ":") {
 					auto resType = std::string(parseStrings[1]); // type
 					auto desc = interpreter->checkTypeInScope(resType, parseScope);
 					static_cast<FunctionExpression*>(currentExpression)->function->getFunction()->returnType = desc;
@@ -1447,10 +1467,33 @@ void Parser::parse(std::string_view token) {
 				else {
 					throw;
 				}
-				clearParseStacks();
+				
+				auto fnc = static_cast<FunctionExpression*>(currentExpression)->function->getFunction();
+				if (fnc && !fnc->genericParams.empty()) {
+					parseState = ParseState::GenericBody;
+					genericBodyNesting = 1;
+				} else {
+					clearParseStacks();
+				}
 				break;
 			}
 			parseStrings.push_back(token);
+			break;
+		}
+	case ParseState::GenericBody:
+		{
+			auto fnc = static_cast<FunctionExpression*>(currentExpression)->function->getFunction();
+			if (token == "{") {
+				genericBodyNesting++;
+			} else if (token == "}") {
+				genericBodyNesting--;
+				if (genericBodyNesting == 0) {
+					clearParseStacks();
+					closeCurrentExpression();
+					break;
+				}
+			}
+			fnc->genericBodyRaw += std::string(token) + " ";
 			break;
 		}
 	default:

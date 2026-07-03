@@ -679,148 +679,157 @@ TEST_CASE("WHILE - Func 45", "[WHILE]") {
 }
 
 TEST_CASE("DECORATOR - Var", "[DECORATOR]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		@test(min=0, max=100, widget="slider")
 		var a = 50;
 	)";
-	std::vector<IkigaiScript::Metadata> meta;
-	try {
-		interp.evaluate(code);
-		meta = interp.getMetadata(interp.getGlobalScope(), "a");
-		REQUIRE(meta.size() == 1);
-		REQUIRE(meta[0].name == "test");
-	} catch (std::exception& e) {
-		std::cerr << "Exception: " << e.what() << std::endl;
-		REQUIRE(false);
-	}
-	REQUIRE(meta[0].arguments.size() == 3);
-	REQUIRE(meta[0].arguments[0].first == "min");
-	REQUIRE(meta[0].arguments[0].second->value.asFloat == 0.0);
-	REQUIRE(meta[0].arguments[1].first == "max");
-	REQUIRE(meta[0].arguments[1].second->value.asFloat == 100.0);
-	REQUIRE(meta[0].arguments[2].first == "widget");
-	REQUIRE(meta[0].arguments[2].second->value.asString == "slider");
+  std::vector<IkigaiScript::Metadata> meta;
+  try {
+    interp.evaluate(code);
+    meta = interp.getMetadata(interp.getGlobalScope(), "a");
+    REQUIRE(meta.size() == 1);
+    REQUIRE(meta[0].name == "test");
+  } catch (std::exception &e) {
+    std::cerr << "Exception: " << e.what() << std::endl;
+    REQUIRE(false);
+  }
+  REQUIRE(meta[0].arguments.size() == 3);
+  REQUIRE(meta[0].arguments[0].first == "min");
+  REQUIRE(meta[0].arguments[0].second->value.asFloat == 0.0);
+  REQUIRE(meta[0].arguments[1].first == "max");
+  REQUIRE(meta[0].arguments[1].second->value.asFloat == 100.0);
+  REQUIRE(meta[0].arguments[2].first == "widget");
+  REQUIRE(meta[0].arguments[2].second->value.asString == "slider");
 }
 
 TEST_CASE("DECORATOR - Class", "[DECORATOR]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		@editable
 		class MyClass {
 			@test(range=0)
 			var a = 50;
 		}
 	)";
-	interp.evaluate(code);
-	auto classScope = interp.resolveScope("MyClass", interp.getGlobalScope());
-	auto classMeta = interp.getMetadata(classScope);
-	REQUIRE(classMeta.size() == 1);
-	REQUIRE(classMeta[0].name == "editable");
-	
-	auto memberMeta = interp.getMetadata(classScope, "a");
-	REQUIRE(memberMeta.size() == 1);
-	REQUIRE(memberMeta[0].name == "test");
-	REQUIRE(memberMeta[0].arguments.size() == 1);
-	REQUIRE(memberMeta[0].arguments[0].first == "range");
-	REQUIRE(memberMeta[0].arguments[0].second->value.asFloat == 0.0);
+  interp.evaluate(code);
+  auto classScope = interp.resolveScope("MyClass", interp.getGlobalScope());
+  auto classMeta = interp.getMetadata(classScope);
+  REQUIRE(classMeta.size() == 1);
+  REQUIRE(classMeta[0].name == "editable");
+
+  auto memberMeta = interp.getMetadata(classScope, "a");
+  REQUIRE(memberMeta.size() == 1);
+  REQUIRE(memberMeta[0].name == "test");
+  REQUIRE(memberMeta[0].arguments.size() == 1);
+  REQUIRE(memberMeta[0].arguments[0].first == "range");
+  REQUIRE(memberMeta[0].arguments[0].second->value.asFloat == 0.0);
 }
 
 TEST_CASE("DECORATOR - Func", "[DECORATOR]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		@test(min=0, max=100)
 		fun a() {
 			return 50;
 		}
 	)";
-	interp.evaluate(code);
-	auto funcMeta = interp.getMetadata(interp.getGlobalScope(), "a");
-	REQUIRE(funcMeta.size() == 1);
-	REQUIRE(funcMeta[0].name == "test");
-	REQUIRE(funcMeta[0].arguments.size() == 2);
-	REQUIRE(funcMeta[0].arguments[0].first == "min");
-	REQUIRE(funcMeta[0].arguments[0].second->value.asFloat == 0.0);
-	REQUIRE(funcMeta[0].arguments[1].first == "max");
-	REQUIRE(funcMeta[0].arguments[1].second->value.asFloat == 100.0);
+  interp.evaluate(code);
+  auto funcMeta = interp.getMetadata(interp.getGlobalScope(), "a");
+  REQUIRE(funcMeta.size() == 1);
+  REQUIRE(funcMeta[0].name == "test");
+  REQUIRE(funcMeta[0].arguments.size() == 2);
+  REQUIRE(funcMeta[0].arguments[0].first == "min");
+  REQUIRE(funcMeta[0].arguments[0].second->value.asFloat == 0.0);
+  REQUIRE(funcMeta[0].arguments[1].first == "max");
+  REQUIRE(funcMeta[0].arguments[1].second->value.asFloat == 100.0);
 }
 
 TEST_CASE("STRINGS - Char Literals", "[STRINGS]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var a = 'x';
 		var b = 'y';
 		var c = a + b;
 	)";
-	interp.evaluate(code);
-	auto res = interp.resolveVariable("a", interp.getGlobalScope());
-	REQUIRE(res->getType() == IkigaiScript::Type::Char);
-	REQUIRE(res->getChar() == 'x');
-    
-    auto resc = interp.resolveVariable("c", interp.getGlobalScope());
-	REQUIRE(resc->getType() == IkigaiScript::Type::Char);
-	REQUIRE(resc->getChar() == (char32_t)('x' + 'y'));
+  interp.evaluate(code);
+  auto res = interp.resolveVariable("a", interp.getGlobalScope());
+  REQUIRE(res->getType() == IkigaiScript::Type::Char);
+  REQUIRE(res->getChar() == 'x');
+
+  auto resc = interp.resolveVariable("c", interp.getGlobalScope());
+  REQUIRE(resc->getType() == IkigaiScript::Type::Char);
+  REQUIRE(resc->getChar() == (char32_t)('x' + 'y'));
 }
 
 TEST_CASE("STRINGS - Multiline", "[STRINGS]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var a = """hello
 world""";
 	)";
-	interp.evaluate(code);
-	auto res = interp.resolveVariable("a", interp.getGlobalScope());
-	REQUIRE(res->getType() == IkigaiScript::Type::String);
-	REQUIRE(res->getString() == "hello\nworld");
+  interp.evaluate(code);
+  auto res = interp.resolveVariable("a", interp.getGlobalScope());
+  REQUIRE(res->getType() == IkigaiScript::Type::String);
+  REQUIRE(res->getString() == "hello\nworld");
 }
 
 TEST_CASE("STRINGS - Interpolation", "[STRINGS]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var name = "World";
 		var a = "Hello {name}!";
         var x = 10;
         var b = "Value: {x * 2}";
 	)";
-	interp.evaluate(code);
-	auto res = interp.resolveVariable("a", interp.getGlobalScope());
-	REQUIRE(res->getType() == IkigaiScript::Type::String);
-	REQUIRE(res->getString() == "Hello World!");
-    
-    auto resb = interp.resolveVariable("b", interp.getGlobalScope());
-	REQUIRE(resb->getType() == IkigaiScript::Type::String);
-	REQUIRE(resb->getString() == "Value: 20");
+  interp.evaluate(code);
+  auto res = interp.resolveVariable("a", interp.getGlobalScope());
+  REQUIRE(res->getType() == IkigaiScript::Type::String);
+  REQUIRE(res->getString() == "Hello World!");
+
+  auto resb = interp.resolveVariable("b", interp.getGlobalScope());
+  REQUIRE(resb->getType() == IkigaiScript::Type::String);
+  REQUIRE(resb->getString() == "Value: 20");
 }
 
 TEST_CASE("EXPRESSION - Block", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var a = { 
 			var b = 40;
 			b + 2; 
 		};
 	)";
-	interp.evaluate(code);
-	auto res = interp.getGlobalScope()->variables["a"]->getInt();
-	REQUIRE(res == 42);
+  interp.evaluate(code);
+  auto res = interp.getGlobalScope()->variables["a"]->getInt();
+  REQUIRE(res == 42);
 }
 
 TEST_CASE("EXPRESSION - Block Nested", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var a = { 
 			var b = { 10 + 20; };
 			b + 12; 
 		};
 	)";
-	interp.evaluate(code);
-	auto res = interp.getGlobalScope()->variables["a"]->getInt();
-	REQUIRE(res == 42);
+  interp.evaluate(code);
+  auto res = interp.getGlobalScope()->variables["a"]->getInt();
+  REQUIRE(res == 42);
 }
 
 TEST_CASE("EXPRESSION - Block with Return", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		fun test() {
 			var a = {
 				return 42;
@@ -830,88 +839,171 @@ TEST_CASE("EXPRESSION - Block with Return", "[EXPRESSION]") {
 		}
 		var b = test();
 	)";
-	interp.evaluate(code);
-	auto res = interp.getGlobalScope()->variables["b"]->getInt();
-	REQUIRE(res == 42);
+  interp.evaluate(code);
+  auto res = interp.getGlobalScope()->variables["b"]->getInt();
+  REQUIRE(res == 42);
 }
 
 TEST_CASE("EXPRESSION - If", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var a = if (true) { 42; } else { 10; };
 		var b = if (false) { 42; } else { 10; };
 	)";
-	interp.evaluate(code);
-	auto a = interp.getGlobalScope()->variables["a"];
-	std::cout << "DEBUG TYPE A: " << (int)a->getType() << std::endl;
-	REQUIRE(a->getInt() == 42);
-	auto b = interp.getGlobalScope()->variables["b"];
-	std::cout << "DEBUG TYPE B: " << (int)b->getType() << std::endl;
-	REQUIRE(b->getInt() == 10);
+  interp.evaluate(code);
+  auto a = interp.getGlobalScope()->variables["a"];
+  std::cout << "DEBUG TYPE A: " << (int)a->getType() << std::endl;
+  REQUIRE(a->getInt() == 42);
+  auto b = interp.getGlobalScope()->variables["b"];
+  std::cout << "DEBUG TYPE B: " << (int)b->getType() << std::endl;
+  REQUIRE(b->getInt() == 10);
 }
 
 TEST_CASE("EXPRESSION - For Comprehension", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var arr = [1, 2, 3];
 		var a = for (x : arr) { x * 2; };
 	)";
-	interp.evaluate(code);
-	auto a = interp.getGlobalScope()->variables["a"];
-	REQUIRE(a->getType() == IkigaiScript::Type::Array);
-	auto& vec = a->getStdVector<IkigaiScript::Int>();
-	REQUIRE(vec.size() == 3);
-	REQUIRE(vec[0] == 2);
-	REQUIRE(vec[1] == 4);
-	REQUIRE(vec[2] == 6);
+  interp.evaluate(code);
+  auto a = interp.getGlobalScope()->variables["a"];
+  REQUIRE(a->getType() == IkigaiScript::Type::Array);
+  auto &vec = a->getStdVector<IkigaiScript::Int>();
+  REQUIRE(vec.size() == 3);
+  REQUIRE(vec[0] == 2);
+  REQUIRE(vec[1] == 4);
+  REQUIRE(vec[2] == 6);
 }
 
 TEST_CASE("EXPRESSION - For Comprehension Multi Arr", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var arr = [10, 20, 30];
 		var a = for (idx, x : arr) { idx + x; };
 	)";
-	interp.evaluate(code);
-	auto a = interp.getGlobalScope()->variables["a"];
-	REQUIRE(a->getType() == IkigaiScript::Type::Array);
-	auto& vec = a->getStdVector<IkigaiScript::Int>();
-	REQUIRE(vec.size() == 3);
-	REQUIRE(vec[0] == 10);
-	REQUIRE(vec[1] == 21);
-	REQUIRE(vec[2] == 32);
+  interp.evaluate(code);
+  auto a = interp.getGlobalScope()->variables["a"];
+  REQUIRE(a->getType() == IkigaiScript::Type::Array);
+  auto &vec = a->getStdVector<IkigaiScript::Int>();
+  REQUIRE(vec.size() == 3);
+  REQUIRE(vec[0] == 10);
+  REQUIRE(vec[1] == 21);
+  REQUIRE(vec[2] == 32);
 }
 
 TEST_CASE("EXPRESSION - For Comprehension Multi Map", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var map = dictionary();
 		map["a"] = 100;
 		map["b"] = 200;
 		var a = for (key, val : map) { val * 2; };
 	)";
-	interp.evaluate(code);
-	auto a = interp.getGlobalScope()->variables["a"];
-	REQUIRE(a->getType() == IkigaiScript::Type::Array);
-	auto& vec = a->getStdVector<IkigaiScript::Int>();
-	REQUIRE(vec.size() == 2);
-	// We can't guarantee map iteration order, so just check sum
-	REQUIRE((vec[0] + vec[1]) == 600);
+  interp.evaluate(code);
+  auto a = interp.getGlobalScope()->variables["a"];
+  REQUIRE(a->getType() == IkigaiScript::Type::Array);
+  auto &vec = a->getStdVector<IkigaiScript::Int>();
+  REQUIRE(vec.size() == 2);
+  // We can't guarantee map iteration order, so just check sum
+  REQUIRE((vec[0] + vec[1]) == 600);
 }
 
 TEST_CASE("EXPRESSION - For Comprehension Multi Map 3", "[EXPRESSION]") {
-	IkigaiScript::IkigaiScriptInterpreter interp(IkigaiScript::ModulePrivilege::allPrivilege);
-	std::string code = R"(
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
 		var map = dictionary();
 		map["a"] = 100;
 		map["b"] = 200;
 		var a = for (idx, key, val : map) { idx + val; };
 	)";
-	interp.evaluate(code);
-	auto a = interp.getGlobalScope()->variables["a"];
-	REQUIRE(a->getType() == IkigaiScript::Type::Array);
-	auto& vec = a->getStdVector<IkigaiScript::Int>();
-	REQUIRE(vec.size() == 2);
-	// We can't guarantee map iteration order, so just check sum (0+100 + 1+200 = 301)
-	REQUIRE((vec[0] + vec[1]) == 301);
+  interp.evaluate(code);
+  auto a = interp.getGlobalScope()->variables["a"];
+  REQUIRE(a->getType() == IkigaiScript::Type::Array);
+  auto &vec = a->getStdVector<IkigaiScript::Int>();
+  REQUIRE(vec.size() == 2);
+  // We can't guarantee map iteration order, so just check sum (0+100 + 1+200 =
+  // 301)
+  REQUIRE((vec[0] + vec[1]) == 301);
+}
+
+TEST_CASE("ASSIGNMENT - Multiple Assignment 1", "[ASSIGNMENT]") {
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
+		var x = 0;
+		var y = 0;
+		x = y = 5;
+		print(x);
+		print(y);
+	)";
+  interp.__DEBUG_OUT__ = "";
+  interp.evaluate(code);
+  REQUIRE(interp.__DEBUG_OUT__ == "55");
+}
+
+TEST_CASE("ASSIGNMENT - Multiple Assignment 2", "[ASSIGNMENT]") {
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
+		var a = 0;
+		var b = 0;
+		var c = 0;
+		a = b = c = 42;
+		print(a);
+		print(b);
+		print(c);
+	)";
+  interp.__DEBUG_OUT__ = "";
+  interp.evaluate(code);
+  REQUIRE(interp.__DEBUG_OUT__ == "424242");
+}
+
+TEST_CASE("NAMED_ARGS - Test basic named args", "[NAMED_ARGS]") {
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
+			fun myFunc(a, b, c) {
+				return a + b * c;
+			}
+			var res = myFunc(c=3, b=2, a=1);
+			print(res);
+			)";
+  interp.__DEBUG_OUT__ = "";
+  interp.evaluate(code);
+  REQUIRE(interp.__DEBUG_OUT__ == "7");
+}
+
+TEST_CASE("NAMED_ARGS - Test mixed named and positional args", "[NAMED_ARGS]") {
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
+			fun myFunc(a, b, c) {
+				return a - b + c;
+			}
+			var res = myFunc(10, c=5, b=2);
+			print(res);
+			)";
+  interp.__DEBUG_OUT__ = "";
+  interp.evaluate(code);
+  REQUIRE(interp.__DEBUG_OUT__ == "13");
+}
+
+TEST_CASE("NAMED_ARGS - Test missing argument with default", "[NAMED_ARGS]") {
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
+			fun myFunc(a, b=10, c=5) {
+				return a + b + c;
+			}
+			var res = myFunc(c=1, a=2);
+			print(res);
+			)";
+  interp.__DEBUG_OUT__ = "";
+  interp.evaluate(code);
+  REQUIRE(interp.__DEBUG_OUT__ == "13");
 }

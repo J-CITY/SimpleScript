@@ -45,6 +45,7 @@ namespace IkigaiScript {
 		
 		int parseLambda = 0;
 		int parseLambdaBrakets = 0;
+		int genericBodyNesting = 0;
 		
 		std::vector<Metadata> pendingMetadata;
 	};

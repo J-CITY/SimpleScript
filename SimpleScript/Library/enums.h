@@ -69,7 +69,8 @@ namespace IkigaiScript
 		List,
 		Set,
 		Map,
-		Class
+		Class,
+		Generic
 	};
 
 	enum class LoopInterupt {
@@ -92,7 +93,8 @@ namespace IkigaiScript
 		IfElse,
 		Continue,
 		Break,
-		Block
+		Block,
+		NamedArgument
 	};
 
 	enum class ParseState : uint8_t {
@@ -120,7 +122,8 @@ namespace IkigaiScript
 		ImportModule,
 		Decorator,
 		DecoratorArgs,
-		DecoratorArgsList
+		DecoratorArgsList,
+		GenericBody
 	};
 
 	
