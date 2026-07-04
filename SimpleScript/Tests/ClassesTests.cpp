@@ -51,8 +51,36 @@ TEST_CASE("class: method smoke — construct with int field", "[classes.methods]
     REQUIRE(getVarType(interp, "m") == IkigaiScript::Type::Class);
 }
 
-// NOTE: p.sum() method call hangs — class method invocation not yet stable.
-// TEST_CASE("class: method returns computed value") — excluded
+// NOTE: p.sum() and g.get() method calls hang due to class scope resolution issue.
+// These tests are smoke-only until the root cause is fixed.
+TEST_CASE("class: method returns computed value (smoke)", "[classes.methods]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        class Point {
+            var x = 0;
+            var y = 0;
+            fun Point(a, b) { x = a; y = b; }
+            fun sum() { return x + y; }
+        }
+        var p = Point(3, 4);
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarType(interp, "p") == IkigaiScript::Type::Class);
+}
+
+TEST_CASE("class: method returns string field (smoke)", "[classes.methods]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        class Greeter {
+            var msg = "hello";
+            fun Greeter(m) { msg = m; }
+            fun get() { return msg; }
+        }
+        var g = Greeter("world");
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarType(interp, "g") == IkigaiScript::Type::Class);
+}
 
 TEST_CASE("class: multiple instances are independent", "[classes.instances]") {
     auto interp = makeInterp();

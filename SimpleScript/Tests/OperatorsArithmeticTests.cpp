@@ -231,18 +231,29 @@ TEST_CASE("compound assign /= int", "[operators.arithmetic]") {
 
 // =============================================================================
 // Hex and binary literals
-// NOTE: 0xFF and 0b1010 literals currently parse as 0 (not yet implemented).
-// These tests document the current behavior for future regression detection.
 // =============================================================================
 
-TEST_CASE("hex literal 0xFF parses (smoke test, no-crash)", "[operators.arithmetic]") {
+TEST_CASE("hex literal 0xFF == 255", "[operators.arithmetic]") {
     auto interp = makeInterp();
     interp.evaluate("var a = 0xFF;");
     REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "a") == 255);
 }
 
-TEST_CASE("binary literal 0b1010 parses (smoke test, no-crash)", "[operators.arithmetic]") {
+TEST_CASE("binary literal 0b1010 == 10", "[operators.arithmetic]") {
     auto interp = makeInterp();
     interp.evaluate("var a = 0b1010;");
     REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "a") == 10);
+}
+
+TEST_CASE("hex literal arithmetic: 0x10 + 1 == 17", "[operators.arithmetic]") {
+    auto interp = makeInterp();
+    REQUIRE(run(interp, "var a = 0x10 + 1; print(a);") == "17");
+}
+
+TEST_CASE("binary literal 0b0000 == 0", "[operators.arithmetic]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a = 0b0000;");
+    REQUIRE(getVarInt(interp, "a") == 0);
 }

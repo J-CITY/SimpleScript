@@ -90,18 +90,36 @@ TEST_CASE("assign incompatible: Int <- float literal raises TypeConvert", "[oper
 }
 
 // =============================================================================
-// Dynamic reassignment
-// NOTE: Cross-type reassignment (e.g. int→string) fails silently in the
-// current interpreter — the variable becomes null. Only same-type reassignment
-// is reliably supported. Tests verify observable print output.
+// Static var: cross-type reassignment is a TypeConvert error
+// Dynamic var/dynamic keyword: cross-type reassignment is allowed
 // =============================================================================
 
-TEST_CASE("dynamic var: same-type reassignment works", "[operators.assignment]") {
+TEST_CASE("static var: same-type reassignment works", "[operators.assignment]") {
     auto interp = makeInterp();
     REQUIRE(run(interp, "var a = 10; a = 20; print(a);") == "20");
 }
 
-TEST_CASE("dynamic var: reassign to another int value", "[operators.assignment]") {
+TEST_CASE("static var: reassign to another int value", "[operators.assignment]") {
     auto interp = makeInterp();
     REQUIRE(run(interp, "var a = 100; a = 42; print(a);") == "42");
+}
+
+TEST_CASE("static var: int <- string raises TypeConvert", "[operators.assignment]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(var a = 10; a = "hello";)");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::TypeConvert);
+}
+
+TEST_CASE("dynamic keyword: int -> string allowed", "[operators.assignment]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(dynamic a = 10; a = "hello";)");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarString(interp, "a") == "hello");
+}
+
+TEST_CASE("var: Dynamic annotation: int -> bool allowed", "[operators.assignment]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a: Dynamic = 10; a = true;");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarType(interp, "a") == IkigaiScript::Type::Bool);
 }

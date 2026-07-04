@@ -67,10 +67,36 @@ TEST_CASE("type error: String <- int raises TypeConvert", "[types.errors]") {
 // Dynamic variables
 // =============================================================================
 
-TEST_CASE("dynamic var: untyped var accepts any type", "[types.dynamic]") {
+TEST_CASE("dynamic var: untyped var accepts same-type reassignment", "[types.dynamic]") {
     auto interp = makeInterp();
-    // Same-type reassignment works reliably
     REQUIRE(run(interp, "var a = 10; a = 20; print(a);") == "20");
+}
+
+TEST_CASE("dynamic keyword: allows cross-type reassignment", "[types.dynamic]") {
+    auto interp = makeInterp();
+    interp.evaluate("dynamic a = 10; a = true;");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarType(interp, "a") == IkigaiScript::Type::Bool);
+}
+
+TEST_CASE("dynamic keyword: reassign int to string", "[types.dynamic]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(dynamic a = 10; a = "hello";)");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarString(interp, "a") == "hello");
+}
+
+TEST_CASE("var: Dynamic annotation allows cross-type reassignment", "[types.dynamic]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a: Dynamic = 10; a = true;");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarType(interp, "a") == IkigaiScript::Type::Bool);
+}
+
+TEST_CASE("dynamic keyword: equivalent to var: Dynamic", "[types.dynamic]") {
+    auto interp = makeInterp();
+    interp.evaluate("dynamic c = 10; var d: Dynamic = 10; c = \"x\"; d = \"x\";");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
 }
 
 TEST_CASE("dynamic var: null assignment", "[types.dynamic]") {
@@ -81,8 +107,9 @@ TEST_CASE("dynamic var: null assignment", "[types.dynamic]") {
 
 TEST_CASE("dynamic var: reassign from int to bool", "[types.dynamic]") {
     auto interp = makeInterp();
+    // plain var locks type: int->bool is now a TypeConvert error
     interp.evaluate("var a = 10; a = true;");
-    REQUIRE(getVarType(interp, "a") == IkigaiScript::Type::Bool);
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::TypeConvert);
 }
 
 // =============================================================================

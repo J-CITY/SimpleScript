@@ -28,6 +28,7 @@ namespace IkigaiScript {
 		ExpressionPtr getExpression(std::vector<std::string_view> strings, ScopePtr scope, Class* classs);
 		ExpressionPtr getResolveVarExpression(const std::string& name, bool classScope);
 		ExpressionPtr parseInterpolatedString(std::string val, ScopePtr scope, Class* classs);
+		ExpressionPtr parseInlineLambda(std::vector<std::string_view> tokens, ScopePtr scope);
 		void parseType(TypeDescriptor& td);
 		void parseContainerSubtype(TypeDescriptor& td);
 

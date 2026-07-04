@@ -40,7 +40,7 @@ bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
 }
 
 bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
-	if (!t1.isInit && t1.isDynamic) {
+	if (t1.isDynamic) {
 		return true;
 	}
 
@@ -247,10 +247,30 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			if (!args[1]->typeDescriptor.isInit) {
 				throw Exception("Use not init variable in expression");
 			}
-			if (!checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor)) {
-				throw Exception("Cannot convert types");
+			// For type-locked variables (isInit && !isDynamic), use strict type comparison.
+			// Only Float←Int upcast is allowed. Bool←Int coercion disallowed for assignment.
+			if (args[0]->typeDescriptor.isInit && !args[0]->typeDescriptor.isDynamic) {
+				bool compatible = (args[0]->typeDescriptor.type == args[1]->typeDescriptor.type)
+					|| (args[0]->typeDescriptor.type == Type::Float && args[1]->typeDescriptor.type == Type::Int)
+					|| (args[0]->typeDescriptor.isNullable && args[1]->typeDescriptor.type == Type::Null);
+				if (!compatible) {
+					throw TypeConvertError(args[0]->typeDescriptor, args[1]->typeDescriptor);
+				}
+			} else {
+				if (!checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor)) {
+					throw TypeConvertError(args[0]->typeDescriptor, args[1]->typeDescriptor);
+				}
 			}
+			// Preserve owner flags across assignment
+			TypeDescriptor ownerTd = args[0]->typeDescriptor;
 			*args[0] = *args[1];
+			args[0]->typeDescriptor.isDynamic = ownerTd.isDynamic;
+			args[0]->typeDescriptor.isConst = ownerTd.isConst;
+			args[0]->typeDescriptor.isNullable = ownerTd.isNullable;
+			args[0]->typeDescriptor.isInit = true;
+			if (!ownerTd.isDynamic && ownerTd.isInit) {
+				args[0]->typeDescriptor.type = ownerTd.type;
+			}
 			return args[0];
 		}},
 
@@ -480,25 +500,28 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			return std::make_shared<Value>((Int)(*args[0] <= *args[1]));
 		}},
 
-		{"!", [](const List& args) {
+		{"!", [this](const List& args) {
+			if (args.size() == 0) {
+				return resolveVariable("!");
+			}
+			if (args.size() == 1) {
+				return std::make_shared<Value>(Int(args[0]->getBool() ? 0 : 1));
+			}
+			throw Exception("! requires 1 argument");
+			return std::make_shared<Value>();
+		}},
 
-				if (args.size() == 0) {
-					return std::make_shared<Value>(Int(0));
-				}
-				if (args.size() == 1) {
-					if (args[0]->getType() != Type::Int) return std::make_shared<Value>();
-					auto val = Int(1);
-					for (auto i = Int(1); i <= args[0]->getInt(); ++i) {
-						val *= i;
-					}
-					return std::make_shared<Value>(val);
-				}
-				if (args.size() == 2) {
-					return std::make_shared<Value>((Bool)(!args[1]->getBool()));
-				}
-				throw Exception("Must have 0, 1 or 2 arguments");
-				return std::make_shared<Value>();
-			}},
+		{"fact", [](const List& args) {
+			if (args.size() != 1) {
+				throw Exception("fact requires 1 argument");
+			}
+			if (args[0]->getType() != Type::Int) return std::make_shared<Value>();
+			auto val = Int(1);
+			for (auto i = Int(1); i <= args[0]->getInt(); ++i) {
+				val *= i;
+			}
+			return std::make_shared<Value>(val);
+		}},
 
 			{ "#", [this](const List& args) {
 				if (args.size() > 1) {
@@ -1672,7 +1695,19 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			scope = newScope(fnc->name, scope);
 		}
 		else {
-			scope = fnc->type == FunctionType::Constructor ? resolveScope(fnc->name, scope) : newScope(fnc->name, scope);
+			// For member/common function calls use a unique call-frame scope to avoid
+			// reusing a stale scope from a previous invocation (which caused hangs).
+			static unsigned callFrameId = 0;
+			std::string callFrame = fnc->name + "__call_" + std::to_string(++callFrameId);
+			scope = fnc->type == FunctionType::Constructor ? resolveScope(fnc->name, scope) : newScope(callFrame, scope);
+		}
+
+		// Inject explicit captures (fun[a, b, cLocal=c]) before arg binding
+		// so that params shadow captures if names collide
+		if (!fnc->captures.empty()) {
+			for (auto& [name, cap] : fnc->captures) {
+				scope->variables[name] = cap.value;
+			}
 		}
 
 		if (args.size() > fnc->argNames.size()) {
@@ -2016,7 +2051,8 @@ ScopePtr IkigaiScriptInterpreter::resolveScope(const std::string& name, ScopePtr
 	while (scope) {
 		auto iter = scope->scopes.find(name);
 		if (iter != scope->scopes.end()) {
-			if (initialScope != iter->second) {
+			// Only re-parent if it wouldn't create a cycle
+			if (initialScope != iter->second && iter->second->parent != initialScope) {
 				iter->second->parent = initialScope;
 			}
 			return iter->second;
@@ -2024,7 +2060,8 @@ ScopePtr IkigaiScriptInterpreter::resolveScope(const std::string& name, ScopePtr
 		else {
 			if (!scope->parent) {
 				if (scope->name == name) {
-					if (initialScope != scope) {
+					// Don't re-parent to itself or create a self-loop
+					if (initialScope != scope && scope->parent != initialScope) {
 						scope->parent = initialScope;
 					}
 					return scope;
@@ -2062,6 +2099,9 @@ TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name
 	}
 	else if (name == "Map") {
 		desc.type = Type::Map; return desc;
+	}
+	else if (name == "Dynamic") {
+		desc.isDynamic = true; return desc;
 	}
 	else {
 		desc.type = Type::Class;
@@ -2153,6 +2193,30 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	case ExpressionType::DefineVar: {
 		auto def = static_cast<DefineVar*>(exp);
 		auto val = getValue(def->defineExpression, scope, classs);
+		// If the declaration has an explicit static type (not Dynamic, not untyped Null-default),
+		// enforce the type constraint at definition time.
+		// Upconvert compatible literal types: Float declared var accepts Int literal.
+		if (!def->typeDescriptor.isDynamic && def->typeDescriptor.type != Type::Null
+			&& def->typeDescriptor.type != val->getType()) {
+			if (def->typeDescriptor.type == Type::Float && val->getType() == Type::Int) {
+				val = std::make_shared<Value>((Float)val->getInt());
+			}
+		}
+		if (!def->typeDescriptor.isDynamic && def->typeDescriptor.type != Type::Null) {
+			if (!checkConvertTypes(def->typeDescriptor, val->typeDescriptor)) {
+				throw TypeConvertError(def->typeDescriptor, val->typeDescriptor);
+			}
+		}
+		// Apply owner flags from declaration to the value
+		TypeDescriptor td = def->typeDescriptor;
+		if (td.type == Type::Null) {
+			// No explicit type: infer from RHS
+			td.type = val->getType();
+			if (!td.subtype && val->typeDescriptor.subtype) td.subtype = val->typeDescriptor.subtype;
+			if (!td.subtype2 && val->typeDescriptor.subtype2) td.subtype2 = val->typeDescriptor.subtype2;
+		}
+		td.isInit = true;
+		val->typeDescriptor = td;
 		scope->variables[def->name] = val;
 		return arena.make<ValueNode>(val);
 	}
@@ -2192,6 +2256,27 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		List args;
 		std::map<std::string, ValuePtr> namedArgs;
 		auto funcExpr = static_cast<FunctionExpression*>(exp);
+
+		// Short-circuit evaluation for && and ||
+		{
+			std::string opName;
+			if (funcExpr->function->getType() == Type::Function) {
+				auto fnc = funcExpr->function->getFunction();
+				if (fnc) opName = fnc->name;
+			} else if (funcExpr->function->getType() == Type::String) {
+				opName = funcExpr->function->getString();
+			}
+			if ((opName == "&&" || opName == "||") && funcExpr->subexpressions.size() == 2) {
+				auto lhs = getValue(funcExpr->subexpressions[0], scope, classs);
+				bool lhsTruthy = lhs->getBool();
+				if (opName == "&&" && !lhsTruthy)
+					return arena.make<ValueNode>(std::make_shared<Value>(Int(0)));
+				if (opName == "||" && lhsTruthy)
+					return arena.make<ValueNode>(std::make_shared<Value>(Int(1)));
+				auto rhs = getValue(funcExpr->subexpressions[1], scope, classs);
+				return arena.make<ValueNode>(std::make_shared<Value>(Int(rhs->getBool() ? 1 : 0)));
+			}
+		}
 
 		for (auto&& sub : funcExpr->subexpressions) {
 			if (sub->type == ExpressionType::NamedArgument) {

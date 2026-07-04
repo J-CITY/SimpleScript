@@ -44,6 +44,103 @@ ExpressionPtr Parser::getResolveVarExpression(const std::string& name, bool clas
 	return interpreter->arena.make<ResolveVar>(name);
 }
 
+// Parse an inline lambda: tokens must begin with "fun" (optionally with capture list [...]
+// before "(") and contain the full fun(...){...} token sequence.
+// Registers the function in the current scope under a unique name and returns a ResolveVar for it.
+ExpressionPtr Parser::parseInlineLambda(std::vector<std::string_view> tokens, ScopePtr scope) {
+	static int uniqId = 0;
+	++uniqId;
+	static std::vector<std::string> namePool;
+	namePool.push_back("__anon_lambda__" + std::to_string(uniqId));
+	const std::string& lambdaName = namePool.back();
+
+	// Extract capture list tokens (between [ and ]) if present, then remove them from the token stream
+	// Remaining tokens are: fun (args) { body }
+	std::vector<std::string_view> captureTokens;
+	std::vector<std::string_view> funcTokens;
+	{
+		size_t i = 0;
+		funcTokens.push_back(tokens[i++]); // "fun"
+		if (i < tokens.size() && tokens[i] == "[") {
+			++i; // skip "["
+			while (i < tokens.size() && tokens[i] != "]") {
+				captureTokens.push_back(tokens[i++]);
+			}
+			if (i < tokens.size()) ++i; // skip "]"
+		}
+		while (i < tokens.size()) funcTokens.push_back(tokens[i++]);
+	}
+
+	// Build capture entries by resolving variables in the current scope now
+	std::vector<std::pair<std::string, Function::CaptureEntry>> pendingCaptures;
+	for (size_t i = 0; i < captureTokens.size(); ) {
+		if (captureTokens[i] == ",") { ++i; continue; }
+		std::string localName = std::string(captureTokens[i++]);
+		if (i < captureTokens.size() && captureTokens[i] == "=") {
+			++i;
+			std::string outerName = (i < captureTokens.size()) ? std::string(captureTokens[i++]) : localName;
+			// Copy-capture: snapshot
+			auto& outer = interpreter->resolveVariable(outerName, scope);
+			Function::CaptureEntry entry;
+			entry.kind = Function::CaptureEntry::Kind::Copy;
+			entry.value = std::make_shared<Value>(*outer);
+			pendingCaptures.push_back({localName, std::move(entry)});
+		} else {
+			// Ref-capture: share ValuePtr
+			auto& outer = interpreter->resolveVariable(localName, scope);
+			Function::CaptureEntry entry;
+			entry.kind = Function::CaptureEntry::Kind::Ref;
+			entry.value = outer;
+			pendingCaptures.push_back({localName, std::move(entry)});
+		}
+	}
+
+	// Insert generated name after "fun"
+	std::vector<std::string_view> patched;
+	patched.reserve(funcTokens.size() + 1);
+	bool nameInserted = false;
+	for (auto& tok : funcTokens) {
+		patched.push_back(tok);
+		if (!nameInserted && tok == "fun") {
+			patched.push_back(std::string_view(lambdaName));
+			nameInserted = true;
+		}
+	}
+
+	auto savedParseScope = parseScope;
+	auto savedState = parseState;
+	auto savedStrings = std::move(parseStrings);
+	auto savedExpr = currentExpression;
+	auto savedPrevExpr = previousExpression;
+
+	// Always register inline lambdas in the global scope (not in a block scope
+	// that may be closed before the lambda is called).
+	parseScope = interpreter->globalScope;
+	currentExpression = nullptr;
+	clearParseStacks();
+
+	for (auto& tok : patched) {
+		parse(tok);
+	}
+	parse(";");
+
+	parseScope = savedParseScope;
+	parseState = savedState;
+	parseStrings = std::move(savedStrings);
+	currentExpression = savedExpr;
+	previousExpression = savedPrevExpr;
+
+	// Apply captures to the registered function (registered in globalScope)
+	if (!pendingCaptures.empty()) {
+		auto fnc = interpreter->resolveFunction(lambdaName, interpreter->globalScope);
+		for (auto& [name, entry] : pendingCaptures) {
+			fnc->captures[name] = std::move(entry);
+		}
+	}
+
+	return getResolveVarExpression(lambdaName, scope->isClassScope);
+}
+
 ExpressionPtr Parser::parseInterpolatedString(std::string val, ScopePtr scope, Class* classs) {
 	size_t pos = 0;
 	while (pos < val.size()) {
@@ -357,6 +454,59 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			break; // We consumed all remaining tokens for the statement!
 		}
 		else if (strings[i] == "(" || strings[i] == "[" || isVarOrFuncToken(strings[i])) {
+			// Inline lambda: fun[...](args){body} or fun(args){body}
+			if (strings[i] == "fun" && i + 1 < strings.size() &&
+				(strings[i + 1] == "(" || strings[i + 1] == "[")) {
+				// Collect all tokens that form this lambda definition until the matching closing "}"
+				std::vector<std::string_view> lambdaTokens;
+				lambdaTokens.push_back(strings[i]); // "fun"
+				++i;
+				// skip optional capture list [...]
+				if (strings[i] == "[") {
+					int depth = 1;
+					lambdaTokens.push_back(strings[i]);
+					while (depth > 0 && ++i < strings.size()) {
+						if (strings[i] == "[") ++depth;
+						else if (strings[i] == "]") --depth;
+						lambdaTokens.push_back(strings[i]);
+					}
+					++i; // skip past "]"
+				}
+				// collect (args)
+				{
+					int depth = 1;
+					lambdaTokens.push_back(strings[i]); // "("
+					while (depth > 0 && ++i < strings.size()) {
+						if (strings[i] == "(") ++depth;
+						else if (strings[i] == ")") --depth;
+						lambdaTokens.push_back(strings[i]);
+					}
+				}
+				// collect return type annotation if present: skip optional ": Type"
+				if (i + 2 < strings.size() && strings[i + 1] == ":") {
+					lambdaTokens.push_back(strings[++i]); // ":"
+					lambdaTokens.push_back(strings[++i]); // type name
+				}
+				// collect {body}
+				if (i + 1 < strings.size() && strings[i + 1] == "{") {
+					++i;
+					int depth = 1;
+					lambdaTokens.push_back(strings[i]); // "{"
+					while (depth > 0 && ++i < strings.size()) {
+						if (strings[i] == "{") ++depth;
+						else if (strings[i] == "}") --depth;
+						lambdaTokens.push_back(strings[i]);
+					}
+				}
+				auto lambdaExpr = parseInlineLambda(std::move(lambdaTokens), scope);
+				if (root) {
+					static_cast<FunctionExpression*>(root)->subexpressions.push_back(lambdaExpr);
+				} else {
+					root = lambdaExpr;
+				}
+				++i;
+				continue;
+			}
 			if (strings[i] == "(" || i + 2 < strings.size() && strings[i + 1] == "(") {
 				// function
 				ExpressionPtr cur = nullptr;
@@ -654,9 +804,9 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			}
 		}
 		else {
-			// number
-			auto val = toDouble(strings[i]);
-			bool isFloat = contains(strings[i], '.');
+			// number (supports decimal, 0x hex, 0b binary)
+			auto val = parseNumericLiteral(strings[i]);
+			bool isFloat = contains(strings[i], '.') && !isHexLiteral(strings[i]) && !isBinaryLiteral(strings[i]);
 			auto newExpr = interpreter->arena.make<ValueNode>(ValuePtr(isFloat ? new Value((Float)val) : new Value((Int)val)), ExpressionType::Value);
 			if (root) {
 				static_cast<FunctionExpression*>(root)->subexpressions.push_back(newExpr);
@@ -753,6 +903,9 @@ void Parser::parse(std::string_view token) {
 		}
 		else if (token == "const") {
 			parseState = ParseState::DefineConst;
+		}
+		else if (token == "dynamic") {
+			parseState = ParseState::DefineDynamic;
 		}
 		else if (token == "for" || token == "while") {
 			parseState = ParseState::LoopCall;
@@ -928,7 +1081,7 @@ void Parser::parse(std::string_view token) {
 				std::vector<std::vector<std::string_view>> exprs = {};
 				exprs.push_back({});
 				for (auto&& str : parseStrings) {
-					if (str == ";") {
+					if (str == ":") {
 						exprs.push_back({});
 					}
 					else {
@@ -982,7 +1135,15 @@ void Parser::parse(std::string_view token) {
 		}
 		break;
 	case ParseState::ReadLine:
-		if (token == ";") {
+		if (token == "{") {
+			parseLambdaBrakets++;
+			parseStrings.push_back(token);
+		}
+		else if (token == "}") {
+			parseLambdaBrakets--;
+			parseStrings.push_back(token);
+		}
+		else if (token == ";" && parseLambdaBrakets == 0) {
 			{//ternary operator
 				if (parseStrings.size() > 2 && parseStrings[1] == "=") {
 					auto f = std::find(parseStrings.begin(), parseStrings.end(), "if");
@@ -1105,7 +1266,7 @@ void Parser::parse(std::string_view token) {
 					if (valStr == "true") val = std::make_shared<Value>(true);
 					else if (valStr == "false") val = std::make_shared<Value>(false);
 					else if (valStr.size() >= 2 && valStr.front() == '"') val = std::make_shared<Value>(valStr.substr(1, valStr.size() - 2));
-					else val = std::make_shared<Value>((Float)toDouble(valStr));
+					else val = std::make_shared<Value>((Float)parseNumericLiteral(valStr));
 					args.push_back({key, val});
 					i += 2;
 				} else if (parseStrings[i] != ",") {
@@ -1114,7 +1275,7 @@ void Parser::parse(std::string_view token) {
 					if (valStr == "true") val = std::make_shared<Value>(true);
 					else if (valStr == "false") val = std::make_shared<Value>(false);
 					else if (valStr.size() >= 2 && valStr.front() == '"') val = std::make_shared<Value>(valStr.substr(1, valStr.size() - 2));
-					else val = std::make_shared<Value>((Float)toDouble(valStr));
+					else val = std::make_shared<Value>((Float)parseNumericLiteral(valStr));
 					args.push_back({"", val});
 				}
 			}
@@ -1126,6 +1287,7 @@ void Parser::parse(std::string_view token) {
 		break;
 	case ParseState::DefineVar:
 	case ParseState::DefineConst:
+	case ParseState::DefineDynamic:
 		if (token == "fun") {
 			parseLambda = 1;
 		}
@@ -1140,53 +1302,49 @@ void Parser::parse(std::string_view token) {
 		}
 		if (parseLambdaBrakets == 0 && (parseLambda == 0 || parseLambda == 2) && token == ";") {
 			if (parseStrings.size() == 0) {
-				throw Exception("Malformed Syntax: `var` keyword must be followed by user supplied name");
+				throw Exception("Malformed Syntax: `var`/`dynamic` keyword must be followed by user supplied name");
 			}
 
 			TypeDescriptor tDescriptor;
 			tDescriptor.isConst = parseState == ParseState::DefineConst;
+			tDescriptor.isDynamic = parseState == ParseState::DefineDynamic;
 
 			auto name = parseStrings.front();
 			ExpressionPtr defineExpr = nullptr;
 			if (parseStrings.size() > 2) {
 				parseStrings.erase(parseStrings.begin()); //name
-				if (parseStrings[0] == ":") {//hase type
+				if (parseStrings[0] == ":") {//has type annotation
 					parseStrings.erase(parseStrings.begin()); // : before type
-					tDescriptor.type = interpreter->checkTypeInScope(std::string(parseStrings[0].begin(), parseStrings[0].end()), parseScope).type;
-					tDescriptor.isDynamic = false;
+					auto typeName = std::string(parseStrings[0].begin(), parseStrings[0].end());
+					auto typeDesc = interpreter->checkTypeInScope(typeName, parseScope);
+					if (typeDesc.isDynamic) {
+						tDescriptor.isDynamic = true;
+					} else {
+						tDescriptor.type = typeDesc.type;
+						tDescriptor.isDynamic = false;
+					}
 					parseStrings.erase(parseStrings.begin()); // type
 					parseContainerSubtype(tDescriptor);
 				}
 				parseStrings.erase(parseStrings.begin()); // =
-				if (parseLambda == 2) { //parsing lambda
+				// Only use parseInlineLambda when the ENTIRE RHS is a lambda (starts with "fun").
+				// For nested lambdas like map(arr, fun(...){...}), use getExpression which
+				// handles inline lambdas in arg position via the inline-lambda detector.
+				if (parseLambda == 2 && !parseStrings.empty() && parseStrings[0] == "fun") {
 					parseLambda = 0;
-					static int uniqId = 0;
-					uniqId++;
-					std::string lambdaName = "__anon_func__" + std::to_string(uniqId);
-					parseStrings.insert(parseStrings.begin() + 1, lambdaName);
-					auto _parseStrings = std::move(parseStrings);
-					clearParseStacks();
-					for (auto& token : _parseStrings) {
-						parse(token);
-					}
-					defineExpr = getExpression({ lambdaName }, parseScope, nullptr);
-					
+					defineExpr = parseInlineLambda(std::vector<std::string_view>(parseStrings.begin(), parseStrings.end()), parseScope);
 				}
 				else {
+					parseLambda = 0;
 					defineExpr = getExpression(std::move(parseStrings), parseScope, nullptr);
 				}
 			}
 			if (currentExpression) {
-				currentExpression->push_back(interpreter->arena.make<DefineVar>(std::string(name), defineExpr));
+				currentExpression->push_back(interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor));
 			}
 			else {
-				auto resValue = interpreter->getValue(interpreter->arena.make<DefineVar>(std::string(name), defineExpr), parseScope, nullptr);
-				if (!tDescriptor.isDynamic && !checkConvertTypes(tDescriptor, resValue->typeDescriptor)) {
-					throw TypeConvertError(tDescriptor, resValue->typeDescriptor);
-				}
-				tDescriptor.type = resValue->getType();
-				tDescriptor.isInit = true;
-				resValue->typeDescriptor = tDescriptor;
+				auto resValue = interpreter->getValue(interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor), parseScope, nullptr);
+				// resValue already has typeDescriptor applied by consolidated(); nothing extra needed here
 			}
 		if (pendingMetadata.size()) {
 			parseScope->membersMetadata[std::string(name)] = pendingMetadata;

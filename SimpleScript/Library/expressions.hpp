@@ -348,13 +348,13 @@ namespace IkigaiScript {
 	struct DefineVar : public Expression {
 		std::string name;
 		ExpressionPtr defineExpression = nullptr;
+		TypeDescriptor typeDescriptor;
 
 		DefineVar(ExpressionPtr par = nullptr) : Expression(ExpressionType::DefineVar, par) {}
-		//DefineVar(const string& n) : name(n) {}
 		DefineVar(const std::string& n, ExpressionPtr defExpr = nullptr, ExpressionPtr par = nullptr) :
 			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr) {}
-
-		
+		DefineVar(const std::string& n, ExpressionPtr defExpr, const TypeDescriptor& td, ExpressionPtr par = nullptr) :
+			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr), typeDescriptor(td) {}
 	};
 
 	struct NamedArgumentExpression : public Expression {

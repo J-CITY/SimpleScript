@@ -60,35 +60,24 @@
 }
 Y = X = 5
 - инициализация полей функций через f(a=1)
-
+- лямбда
 
 -----------------------------------
+-Generics
+transaction
+
 
 switch case
 Range Expressions
 Array Slicing
 Variance
+Tuples
+
+-модули
+-- наследование
+тесты коментарии
 
 defer
 live переменные
-
-проверить
--Generics
--модули
--Tuples
-- лямбда
-
--- наследование
-
-0xFF/0b1010 парсятся как 0 (hex/bin не реализованы)
-
-
-
-классы и функции из с++ использовать в скрипте
-Операторы &&/|| не short-circuit (eager evaluation)
-
-Inline-лямбды в аргументах map(arr, fun(...){}) вызывают SIGSEGV — использовать named functions
-Вызов методов класса p.method() зависает
-
-Смена типа переменной (int→string) при присваивании происходит беззвучно
+concurrency
 

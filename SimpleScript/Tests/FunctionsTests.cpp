@@ -180,3 +180,62 @@ TEST_CASE("variadic: function receives extra args", "[functions.variadic]") {
 
 // NOTE: applyfunction(f, array_of_args) hangs — excluded.
 // TEST_CASE("applyfunction: call function with list of args") — skipped
+
+// =============================================================================
+// Explicit capture: fun[...]
+// =============================================================================
+
+TEST_CASE("closure: ref-capture keeps var alive after block", "[functions.closure]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        dynamic add = null;
+        {
+            var base = 10;
+            add = fun[base](x) { return base + x; };
+        }
+        var result = add(5);
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "result") == 15);
+}
+
+TEST_CASE("closure: copy-capture snapshot is independent of outer", "[functions.closure]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        var c = 100;
+        var fn = fun[local=c](x) { return local + x; };
+        c = 999;
+        var result = fn(1);
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "result") == 101);
+}
+
+TEST_CASE("closure: param shadows capture name", "[functions.closure]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        var n = 99;
+        var fn = fun[n](n) { return n; };
+        var result = fn(5);
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "result") == 5);
+}
+
+TEST_CASE("closure: inline lambda in map with capture", "[functions.closure]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        var off = 1;
+        var arr = [1, 2, 3];
+        dynamic result = null;
+        result = map(arr, fun[off](x) { return x + off; });
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    auto r = getVar(interp, "result");
+    REQUIRE((r->getType() == IkigaiScript::Type::Array || r->getType() == IkigaiScript::Type::List));
+}
+
+TEST_CASE("builtin fact(n) computes factorial", "[functions.builtin]") {
+    auto interp = makeInterp();
+    REQUIRE(run(interp, "print(fact(5));") == "120");
+}

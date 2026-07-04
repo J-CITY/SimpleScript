@@ -345,6 +345,12 @@ namespace IkigaiScript {
         std::vector<std::string> genericParams;
         std::string genericBodyRaw;
 
+        struct CaptureEntry {
+            enum class Kind { Ref, Copy } kind;
+            ValuePtr value;  // Ref: shared ptr aliasing outer; Copy: owned snapshot
+        };
+        std::map<std::string, CaptureEntry> captures;  // key = name visible in body
+
         FunctionBodyVariant body;
 
         FunctionBodyType getBodyType() {

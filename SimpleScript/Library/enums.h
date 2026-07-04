@@ -123,7 +123,8 @@ namespace IkigaiScript
 		Decorator,
 		DecoratorArgs,
 		DecoratorArgsList,
-		GenericBody
+		GenericBody,
+		DefineDynamic
 	};
 
 	
@@ -152,7 +153,7 @@ namespace IkigaiScript
 		bool isInit = false;
 		bool isNullable = true;
 		bool isConst = false;
-		bool isDynamic = true;
+		bool isDynamic = false;
 
 		std::optional<std::variant<std::string, std::shared_ptr<TypeDescriptor>>> subtype;
 		std::optional<std::shared_ptr<TypeDescriptor>> subtype2; // for map

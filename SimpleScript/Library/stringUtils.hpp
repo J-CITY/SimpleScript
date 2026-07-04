@@ -7,15 +7,36 @@
 
 namespace IkigaiScript {
     inline double toDouble(const std::string& token) {
-        double x;
+        double x = 0;
         std::from_chars(token.data() + (token[0] == '+' ? 1 : 0), token.data() + token.size(), x);
         return x;
     }
 
     inline double toDouble(std::string_view token) {
-        double x;
+        double x = 0;
         std::from_chars(token.data() + (token[0] == '+' ? 1 : 0), token.data() + token.size(), x);
         return x;
+    }
+
+    // Parse numeric literals including hex (0x/0X) and binary (0b/0B).
+    inline double parseNumericLiteral(std::string_view token) {
+        if (token.size() >= 2 && token[0] == '0') {
+            if (token[1] == 'x' || token[1] == 'X') {
+                unsigned long long v = 0;
+                std::from_chars(token.data() + 2, token.data() + token.size(), v, 16);
+                return static_cast<double>(v);
+            }
+            if (token[1] == 'b' || token[1] == 'B') {
+                unsigned long long v = 0;
+                std::from_chars(token.data() + 2, token.data() + token.size(), v, 2);
+                return static_cast<double>(v);
+            }
+        }
+        return toDouble(token);
+    }
+
+    inline double parseNumericLiteral(const std::string& token) {
+        return parseNumericLiteral(std::string_view(token));
     }
     
     template<typename T, typename C>

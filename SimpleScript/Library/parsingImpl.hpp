@@ -666,9 +666,9 @@ ExpressionPtr IkigaiScriptInterpreter::getExpression(const std::vector<std::stri
 				}
 			}
 		} else {
-			// number
-			auto val = toDouble(strings[i]);
-			bool isFloat = contains(strings[i], '.');
+			// number (supports decimal, 0x hex, 0b binary)
+			auto val = parseNumericLiteral(strings[i]);
+			bool isFloat = contains(strings[i], '.') && !isHexLiteral(strings[i]) && !isBinaryLiteral(strings[i]);
 			auto newExpr = arena.make<ValueNode>(ValuePtr(isFloat ? new Value((Float)val) : new Value((Int)val)), ExpressionType::Value);
 			if (root) {
 				static_cast<FunctionExpression*>(root)->subexpressions.push_back(newExpr);
@@ -698,6 +698,8 @@ void Parser::parse(std::string_view token) {
 			parseState = ParseState::DefineFunc;
 		} else if (token == "var") {
 			parseState = ParseState::DefineVar;
+		} else if (token == "dynamic") {
+			parseState = ParseState::DefineDynamic;
 		} else if (token == "for" || token == "while") {
 			parseState = ParseState::LoopCall;
 			if (currentExpression) {
@@ -820,7 +822,7 @@ void Parser::parse(std::string_view token) {
 				std::vector<std::vector<std::string_view>> exprs = {};
 				exprs.push_back({});
 				for (auto&& str : parseStrings) {
-					if (str == ";") {
+					if (str == ":") {
 						exprs.push_back({});
 					} else {
 						exprs.back().push_back(move(str));
@@ -928,7 +930,7 @@ void Parser::parse(std::string_view token) {
 					if (valStr == "true") val = std::make_shared<Value>(true);
 					else if (valStr == "false") val = std::make_shared<Value>(false);
 					else if (valStr.size() >= 2 && valStr.front() == '"') val = std::make_shared<Value>(valStr.substr(1, valStr.size() - 2));
-					else val = std::make_shared<Value>((Float)toDouble(valStr));
+					else val = std::make_shared<Value>((Float)parseNumericLiteral(valStr));
 					args.push_back({key, val});
 					i += 2;
 				} else if (parseStrings[i] != ",") {
@@ -937,7 +939,7 @@ void Parser::parse(std::string_view token) {
 					if (valStr == "true") val = std::make_shared<Value>(true);
 					else if (valStr == "false") val = std::make_shared<Value>(false);
 					else if (valStr.size() >= 2 && valStr.front() == '"') val = std::make_shared<Value>(valStr.substr(1, valStr.size() - 2));
-					else val = std::make_shared<Value>((Float)toDouble(valStr));
+					else val = std::make_shared<Value>((Float)parseNumericLiteral(valStr));
 					args.push_back({"", val});
 				}
 			}
@@ -948,21 +950,36 @@ void Parser::parse(std::string_view token) {
 		}
 		break;
 	case ParseState::DefineVar:
+	case ParseState::DefineDynamic:
 		if (token == ";") {
 			if (parseStrings.size() == 0) {
-				throw Exception("Malformed Syntax: `var` keyword must be followed by user supplied name");
+				throw Exception("Malformed Syntax: `var`/`dynamic` keyword must be followed by user supplied name");
 			}
+			TypeDescriptor tDescriptor;
+			tDescriptor.isDynamic = parseState == ParseState::DefineDynamic;
 			auto name = parseStrings.front();
 			ExpressionPtr defineExpr = nullptr;
 			if (parseStrings.size() > 2) {
 				parseStrings.erase(parseStrings.begin());
+				if (parseStrings[0] == ":") {
+					parseStrings.erase(parseStrings.begin());
+					auto typeName = std::string(parseStrings[0].begin(), parseStrings[0].end());
+					auto typeDesc = checkTypeInScope(typeName, parseScope);
+					if (typeDesc.isDynamic) {
+						tDescriptor.isDynamic = true;
+					} else {
+						tDescriptor.type = typeDesc.type;
+						tDescriptor.isDynamic = false;
+					}
+					parseStrings.erase(parseStrings.begin());
+				}
 				parseStrings.erase(parseStrings.begin());
 				defineExpr = getExpression(move(parseStrings), parseScope, nullptr);
 			}
 			if (currentExpression) {
-				currentExpression->push_back(arena.make<DefineVar>(std::string(name), defineExpr));
+				currentExpression->push_back(arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor));
 			} else {
-				getValue(arena.make<DefineVar>(std::string(name), defineExpr), parseScope, nullptr);
+				getValue(arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor), parseScope, nullptr);
 			}
 			if (pendingMetadata.size()) {
 				parseScope->membersMetadata[std::string(name)] = pendingMetadata;
@@ -1079,6 +1096,7 @@ bool IkigaiScriptInterpreter::readLine(std::string_view text) {
 #else 
 		printf("Error at line %llu at %i: %s : %s\n", currentLine, tokenCount, std::string(tokens[tokenCount]).c_str(), e.errStr.c_str());
 #endif		
+		__EXEPTION__ = e.type;
 		clearParseStacks();
 		parseScope = globalScope;
 		currentExpression = nullptr;

@@ -161,15 +161,23 @@ TEST_CASE("set: set() constructor creates Set type", "[collections.set]") {
 // HOF: map and fold
 // =============================================================================
 
-// NOTE: Inline lambda in builtin function calls (map/fold) causes SIGSEGV.
-// These tests use named functions instead.
-
 TEST_CASE("builtin map: transforms array with named function", "[collections.hof]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         fun doubleit(x) { return x * 2; }
         var arr = [1, 2, 3];
         var doubled = map(arr, doubleit);
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    auto d = getVar(interp, "doubled");
+    REQUIRE((d->getType() == IkigaiScript::Type::Array || d->getType() == IkigaiScript::Type::List));
+}
+
+TEST_CASE("builtin map: inline lambda", "[collections.hof]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        var arr = [1, 2, 3];
+        var doubled = map(arr, fun(x) { return x * 2; });
     )");
     REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
     auto d = getVar(interp, "doubled");
@@ -183,6 +191,14 @@ TEST_CASE("builtin fold: reduces array to single value with named function", "[c
         var arr = [1, 2, 3, 4];
         var total = fold(arr, 0, sumfn);
     )");
-    // fold with named function should not crash; value check depends on implementation
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+}
+
+TEST_CASE("builtin fold: inline lambda", "[collections.hof]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        var arr = [1, 2, 3, 4];
+        var total = fold(arr, 0, fun(acc, x) { return acc + x; });
+    )");
     REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
 }

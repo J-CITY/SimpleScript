@@ -209,14 +209,14 @@ TEST_CASE("range() string slice", "[control.range]") {
 }
 
 // =============================================================================
-// foreach (x; collection)
+// foreach (x : collection)
 // =============================================================================
 
 TEST_CASE("foreach: iterate array", "[control.foreach]") {
     auto interp = makeInterp();
     REQUIRE(run(interp, R"(
         var arr = [5, 6, 7];
-        foreach (x; arr) { print(x); }
+        foreach (x : arr) { print(x); }
     )") == "567");
 }
 
