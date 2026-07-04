@@ -10,8 +10,11 @@ add_library(IkigaiScriptCore ${CORE_SOURCES})
 target_include_directories(IkigaiScriptCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- Tests ---
-# Убедитесь, что catch.hpp находится в папке Tests
-add_executable(SimpleScriptTests Tests/SimpleScriptTests.cpp)
+file(GLOB TEST_SOURCES
+    "Tests/*Tests.cpp"
+    "Tests/TestMain.cpp"
+)
+add_executable(SimpleScriptTests ${TEST_SOURCES})
 target_link_libraries(SimpleScriptTests PRIVATE IkigaiScriptCore)
 
 # --- Main Application (Visual Editor & Interpreter) ---
