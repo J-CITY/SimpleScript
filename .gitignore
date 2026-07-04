@@ -68,3 +68,5 @@ imgui.ini
 # Python scratch scripts
 __pycache__/
 *.pyc
+
+SimpleScript/imgui/*
