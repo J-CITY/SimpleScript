@@ -768,18 +768,18 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 							addedArgs = true;
 						}
 					}
-					else if (strings[i] == ")") {
-						if (--nestLayers > 0) {
-							minisub.push_back(strings[i]);
-						}
-						else {
-							if (minisub.size()) {
-								static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(parseArg(std::move(minisub)));
-								minisub.clear();
-								addedArgs = true;
-							}
-						}
+				else if (strings[i] == ")") {
+					if (--nestLayers > 0) {
+						minisub.push_back(strings[i]);
 					}
+					else {
+						if (minisub.size()) {
+							static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(parseArg(std::move(minisub)));
+							minisub.clear();
+						}
+						addedArgs = true; // closing ')' reached — set even with 0 args
+					}
+				}
 					else if (strings[i] == "(") {
 						++nestLayers;
 						minisub.push_back(strings[i]);

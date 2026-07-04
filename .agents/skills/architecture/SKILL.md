@@ -141,6 +141,12 @@ globalScope
 - A **class instance** (`Class` object) copies variables from the class scope at construction time (`Class::Class(ScopePtr)`). Each instance has its own `variables` map.
 - Methods look up instance fields via `classs->variables`, not via the scope chain.
 
+### `MemberFunctionCall` args parsing — zero-arg gotcha
+
+`p.method()` with **zero arguments**: the inner args-loop only set `addedArgs = true` when a non-empty arg was pushed. For zero-arg calls `)` was reached with empty buffer → `addedArgs = false` → `i` was reset to the method name → next `++i` landed on `(` again → `(` was re-processed, injecting a spurious `identity()` call into `subexpressions`. This made `callFunction` see 1 unexpected arg and throw.
+
+**Fix (parser.cpp ~line 775):** set `addedArgs = true` whenever the closing `)` is reached at `nestLayers == 0`, regardless of whether any args were collected.
+
 ---
 
 ## 7. Function Calls (`callFunction`)
@@ -197,7 +203,6 @@ Use `parseNumericLiteral` (not `toDouble`) anywhere a raw token is converted to 
 
 | Issue | Status |
 |---|---|
-| `p.method()` call hangs (infinite loop) | Open — structural fixes applied (unique call frames, resolveScope anti-cycle) but root cause in member function body execution not yet resolved |
 | `parsingImpl.hpp` is a legacy duplicate of some parser logic | Exists for backward compat; keep in sync when modifying `parser.cpp` |
 | `var x;` (declaration without assignment) may crash in `consolidated()` DefineVar if `defineExpression == nullptr` | Not reproduced, but potential null-deref on `val->getType()` |
 | `ReadLine` lambda brace tracking via `parseLambdaBrakets` | Fixed; `{`/`}` inside ReadLine now properly tracked |
