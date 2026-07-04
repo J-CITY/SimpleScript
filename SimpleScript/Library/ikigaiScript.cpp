@@ -1570,7 +1570,7 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 	return std::make_shared<Value>();
 }
 
-ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, const List& args, Class* classs) {
+ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs) {
 	if (!fnc->genericParams.empty()) {
 		std::map<std::string, std::string> genericTypeMap;
 		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
@@ -1684,7 +1684,6 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			isTyped = true;
 		}
 
-		//auto limit = std::min(args.size(), fnc->argNames.size());
 		std::vector<std::string> newVars;
 		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
 			if (fnc->argNames.size() - 1 == i && fnc->variableArgsParam) {
@@ -1697,23 +1696,28 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			if (ref == nullptr) {
 				newVars.push_back(fnc->argNames[i]);
 			}
-			if (i >= args.size()) {
-				if (fnc->defValues.contains(argName)) {
-					auto val = getValue(fnc->defValues[argName], scope, classs);
-					if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
-						throw;
-					}
-					ref = val;
-				}
-				else {
-					throw;
-				}
-			}
-			else {
+			if (i < args.size()) {
+				// Positional argument provided
 				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->types.at(argName))) {
 					throw;
 				}
 				ref = args[i];
+			} else if (namedArgs.count(argName)) {
+				// Named argument provided
+				auto val = namedArgs.at(argName);
+				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
+					throw;
+				}
+				ref = val;
+			} else if (fnc->defValues.contains(argName)) {
+				// Default value
+				auto val = getValue(fnc->defValues[argName], scope, classs);
+				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
+					throw;
+				}
+				ref = val;
+			} else {
+				throw;
 			}
 		}
 
@@ -2186,10 +2190,16 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	case ExpressionType::FunctionCall:
 	{
 		List args;
+		std::map<std::string, ValuePtr> namedArgs;
 		auto funcExpr = static_cast<FunctionExpression*>(exp);
 
 		for (auto&& sub : funcExpr->subexpressions) {
-			args.push_back(getValue(sub, scope, classs));
+			if (sub->type == ExpressionType::NamedArgument) {
+				auto namedArg = static_cast<NamedArgumentExpression*>(sub);
+				namedArgs[namedArg->name] = getValue(namedArg->expression, scope, classs);
+			} else {
+				args.push_back(getValue(sub, scope, classs));
+			}
 		}
 
 		if (funcExpr->function->getType() == Type::String) {
@@ -2198,7 +2208,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		if (funcExpr->function->getType() == Type::Coro) {
 			return arena.make<ValueNode>(callCoro(funcExpr->function->getCoro()));
 		}
-		return arena.make<ValueNode>(callFunction(funcExpr->function->getFunction(), scope, args, classs));
+		return arena.make<ValueNode>(callFunction(funcExpr->function->getFunction(), scope, args, namedArgs, classs));
 	}
 	break;
 	case ExpressionType::Loop:

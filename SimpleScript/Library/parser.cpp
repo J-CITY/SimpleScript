@@ -34,7 +34,7 @@ bool needsUnaryPlacementFix(const std::vector<std::string_view>& strings, size_t
 }
 
 bool checkPrecedence(OperatorPrecedence curr, OperatorPrecedence neww) {
-	return (int)curr < (int)neww || (neww == curr && neww == OperatorPrecedence::incdec);
+	return (int)curr < (int)neww || (neww == curr && (neww == OperatorPrecedence::incdec || neww == OperatorPrecedence::assign));
 }
 
 ExpressionPtr Parser::getResolveVarExpression(const std::string& name, bool classScope) {
@@ -230,7 +230,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 										}
 									}
 								}
-								rootExpression->subexpressions.push_back(parseArg(std::move(minisub)));
+								rootExpression->subexpressions.push_back(getExpression(std::move(minisub), scope, classs));
 							}
 							currExpression->subexpressions.push_back(root);
 							root = prev;
@@ -1266,8 +1266,11 @@ void Parser::parse(std::string_view token) {
 	case ParseState::FuncArgs:
 	case ParseState::OperatorArgs:
 	case ParseState::CoroArgs:
-		if (token == "(" || token == ",") {
-			// skip it
+		if (token == "(") {
+			// skip opening paren
+		}
+		else if (token == ",") {
+			parseStrings.push_back(token);
 		}
 		else if (token == ")") {
 			enum class ParseFuncArgs {
@@ -1313,7 +1316,12 @@ void Parser::parse(std::string_view token) {
 			//}
 			ParseFuncArgs state = ParseFuncArgs::Arg;
 			for (int i = 0; i < parseStrings.size();) {
-				if (state == ParseFuncArgs::Arg) {
+			if (state == ParseFuncArgs::Arg) {
+					// Skip comma separators
+					if (parseStrings[i] == ",") {
+						i++;
+						continue;
+					}
 					if (varArgsValue) { //after variable nums of arg can not set enather var
 						throw;
 					}
@@ -1361,17 +1369,23 @@ void Parser::parse(std::string_view token) {
 					auto type = std::string(parseStrings[i]);
 					types[args.back()] = interpreter->checkTypeInScope(type, parseScope);
 					i++;
-					if (hasDefValue && parseStrings.size() > i && parseStrings[i] != "=") {
+					// Skip comma separator
+					if (parseStrings.size() > i && parseStrings[i] == ",") {
+						if (hasDefValue) {
+							throw; // After default values, all remaining args must have defaults
+						}
+						i++;
+						state = ParseFuncArgs::Arg;
+					}
+					else if (hasDefValue && parseStrings.size() > i && parseStrings[i] != "=") {
 						throw;
 					}
-					if (parseStrings.size() > i && parseStrings[i] == "=") {
+					else if (parseStrings.size() > i && parseStrings[i] == "=") {
 						if (parseState == ParseState::OperatorArgs) {
 							throw;
 						}
 						hasDefValue = true;
 						i++;
-					}
-					if (hasDefValue) {
 						state = ParseFuncArgs::Expression;
 					} else {
                         state = ParseFuncArgs::Arg;
@@ -1384,6 +1398,11 @@ void Parser::parse(std::string_view token) {
 						++i;
 					}
 					defValues[args.back()] = getExpression(exprs, parseScope, nullptr);
+					// Skip comma separator if present
+					if (i < parseStrings.size() && parseStrings[i] == ",") {
+						++i;
+					}
+					state = ParseFuncArgs::Arg;
 				}
 			}
 			auto isConstructor = parseScope->isClassScope && parseScope->name == fncName;

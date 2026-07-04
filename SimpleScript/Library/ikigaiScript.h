@@ -94,8 +94,9 @@ namespace IkigaiScript {
 		ScopePtr newModule(const std::string& name, ModulePrivilegeFlags flags, const std::unordered_map<std::string, Lambda>& functions);
 		ValuePtr callFunction(const std::string& name, ScopePtr scope, const List& args);
 		ValuePtr callCoro(CoroRef coro);
-		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, Class* classs = nullptr);
-		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, ClassRef classs) { return callFunction(fnc, scope, args, classs.get()); }
+		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs = nullptr);
+		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, Class* classs = nullptr) { return callFunction(fnc, scope, args, {}, classs); }
+		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, ClassRef classs) { return callFunction(fnc, scope, args, {}, classs.get()); }
 		ValuePtr callFunction(const std::string& name, const List& args) { return callFunction(name, globalScope, args); }
 		ValuePtr callFunction(FunctionRef fnc, const List& args) { return callFunction(fnc, globalScope, args); }
 		template <typename ... Ts>

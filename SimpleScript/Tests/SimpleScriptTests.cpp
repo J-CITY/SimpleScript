@@ -853,10 +853,8 @@ TEST_CASE("EXPRESSION - If", "[EXPRESSION]") {
 	)";
   interp.evaluate(code);
   auto a = interp.getGlobalScope()->variables["a"];
-  std::cout << "DEBUG TYPE A: " << (int)a->getType() << std::endl;
   REQUIRE(a->getInt() == 42);
   auto b = interp.getGlobalScope()->variables["b"];
-  std::cout << "DEBUG TYPE B: " << (int)b->getType() << std::endl;
   REQUIRE(b->getInt() == 10);
 }
 
@@ -991,6 +989,22 @@ TEST_CASE("NAMED_ARGS - Test mixed named and positional args", "[NAMED_ARGS]") {
   interp.__DEBUG_OUT__ = "";
   interp.evaluate(code);
   REQUIRE(interp.__DEBUG_OUT__ == "13");
+}
+
+
+TEST_CASE("NAMED_ARGS - Test default values only", "[NAMED_ARGS]") {
+  IkigaiScript::IkigaiScriptInterpreter interp(
+      IkigaiScript::ModulePrivilege::allPrivilege);
+  std::string code = R"(
+			fun myFunc(a, b=10, c=5) {
+				return a + b + c;
+			}
+			var res = myFunc(2);
+			print(res);
+			)";
+  interp.__DEBUG_OUT__ = "";
+  interp.evaluate(code);
+  REQUIRE(interp.__DEBUG_OUT__ == "17");
 }
 
 TEST_CASE("NAMED_ARGS - Test missing argument with default", "[NAMED_ARGS]") {
