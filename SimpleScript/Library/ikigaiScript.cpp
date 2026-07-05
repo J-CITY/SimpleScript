@@ -15,6 +15,7 @@
 #include "exception.h"
 #include "expressions.hpp"
 #include "lexer.h"
+#include "utf8Utils.hpp"
 
 using namespace IkigaiScript;
 
@@ -36,7 +37,7 @@ bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
 		vec.erase(vec.begin());
 		return true;
 	}
-	throw;
+	throw Exception("Malformed syntax: unexpected token");
 }
 
 bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
@@ -62,7 +63,7 @@ bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
 		auto& className1 = std::get<std::string>(t1.subtype.value());
 		auto& className2 = std::get<std::string>(t2.subtype.value());
 		if (className1.empty() || className2.empty()) {
-			throw;
+			throw Exception("Malformed syntax: unexpected token");
 		}
 		if (className1 == className2) {
 			return true;
@@ -129,7 +130,11 @@ bool isMathOperator(std::string_view test) {
 		return contains("+-*/%<>=!"s, test[0]);
 	}
 	if (test.size() == 2) {
+		if (test == ".." ) return true;
 		return contains(MultiCharTokenStartChars, test[0]) && contains("=+-&|"s, test[1]);
+	}
+	if (test.size() == 3) {
+		return test == "..=";
 	}
 	return false;
 }
@@ -523,6 +528,26 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			return std::make_shared<Value>(val);
 		}},
 
+		{"..", [](const List& args) {
+			// start..end — exclusive: [start, end)
+			if (args.size() != 2) throw Exception(".. requires 2 arguments");
+			RangeValue rv;
+			rv.start = args[0]->getInt();
+			rv.end_ = args[1]->getInt();
+			rv.inclusive = false;
+			return std::make_shared<Value>(rv);
+		}},
+
+		{"..=", [](const List& args) {
+			// start..=end — inclusive: [start, end]
+			if (args.size() != 2) throw Exception("..= requires 2 arguments");
+			RangeValue rv;
+			rv.start = args[0]->getInt();
+			rv.end_ = args[1]->getInt();
+			rv.inclusive = true;
+			return std::make_shared<Value>(rv);
+		}},
+
 			{ "#", [this](const List& args) {
 				if (args.size() > 1) {
 					throw Exception("Must have 0 or 1 arguments");
@@ -551,45 +576,95 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 				return std::make_shared<Value>(*args[0]);
 			}},
 
-			{"listindex", [](List args) {
-					if (args.size() > 0) {
-						if (args.size() == 1) {
-							return args[0];
-						}
+		{"listindex", [](List args) {
+				if (args.size() > 0) {
+					if (args.size() == 1) {
+						return args[0];
+					}
 
-						auto var = args[0];
-						if (args[1]->getType() != Type::Int) {
-							var->upconvert(Type::Map);
-						}
+					auto var = args[0];
 
-						switch (var->getType()) {
-						case Type::Array: {
-							auto ival = args[1]->getInt();
-							auto& arr = var->getArray();
-							if (ival < 0 || ival >= (Int)arr.size()) {
-								throw Exception("Out of bounds array access index "s + std::to_string(ival) + ", array length " + std::to_string(arr.size()));
+					// Range slicing: arr[start..end] or arr[start..=end]
+					if (args[1]->getType() == Type::Range) {
+						auto& rv = args[1]->getRange();
+						Int start = rv.start;
+						Int end = rv.inclusive ? rv.end_ : rv.end_ - 1;
+						if (var->getType() == Type::String) {
+							auto& s = var->getString();
+							Int len = (Int)s.size();
+							if (start < 0) start = 0;
+							if (end >= len) end = len - 1;
+							if (start > end) return std::make_shared<Value>(std::string(""));
+							return std::make_shared<Value>(s.substr(start, end - start + 1));
+						}
+						auto makeSlice = [&](auto& container) {
+							Int len = (Int)container.size();
+							if (start < 0) start = 0;
+							if (end >= len) end = len - 1;
+							List result;
+							for (Int i = start; i <= end; ++i) {
+								result.push_back(std::make_shared<Value>(*container[i]));
 							}
-							else {
+							return std::make_shared<Value>(result);
+						};
+						if (var->getType() == Type::List || var->getType() == Type::Tuple) {
+							return makeSlice(var->getList());
+						}
+						if (var->getType() == Type::Array) {
+							auto& arr = var->getArray();
+							Int len = (Int)arr.size();
+							if (start < 0) start = 0;
+							if (end >= len) end = len - 1;
+							List result;
+							for (Int i = start; i <= end; ++i) {
 								switch (arr.getType()) {
-								case Type::Int:
-									return std::make_shared<Value>(arr.value.asInt[ival]);
-									break;
-								case Type::Float:
-									return std::make_shared<Value>(arr.value.asFloat[ival]);
-									break;
-								//case Type::Vec3:
-								//	return std::make_shared<Value>(get<vector<vec3>>(arr.value)[ival]);
-								//	break;
-								case Type::String:
-									return std::make_shared<Value>(arr.value.asString[ival]);
-									break;
-								default:
-									throw Exception("Attempting to access array of illegal type");
-									break;
+								case Type::Int: result.push_back(std::make_shared<Value>(arr.value.asInt[i])); break;
+								case Type::Float: result.push_back(std::make_shared<Value>(arr.value.asFloat[i])); break;
+								case Type::String: result.push_back(std::make_shared<Value>(arr.value.asString[i])); break;
+								default: break;
 								}
 							}
+							return std::make_shared<Value>(result);
 						}
-						break;
+						return std::make_shared<Value>();
+					}
+
+					if (args[1]->getType() != Type::Int) {
+						var->upconvert(Type::Map);
+					}
+
+					switch (var->getType()) {
+					case Type::Array: {
+						auto ival = args[1]->getInt();
+						auto& arr = var->getArray();
+						if (ival < 0 || ival >= (Int)arr.size()) {
+							throw Exception("Out of bounds array access index "s + std::to_string(ival) + ", array length " + std::to_string(arr.size()));
+						}
+						else {
+							switch (arr.getType()) {
+							case Type::Int:
+								return std::make_shared<Value>(arr.value.asInt[ival]);
+								break;
+							case Type::Float:
+								return std::make_shared<Value>(arr.value.asFloat[ival]);
+								break;
+							case Type::String:
+								return std::make_shared<Value>(arr.value.asString[ival]);
+								break;
+							default:
+								throw Exception("Attempting to access array of illegal type");
+								break;
+							}
+						}
+					}
+					break;
+					case Type::String: {
+						// Unicode-aware: return Char at code point index
+						auto ival = args[1]->getInt();
+						char32_t cp = utf8At(var->getString(), (size_t)ival);
+						return std::make_shared<Value>(cp);
+					}
+					break;
 						default:
 							var = std::make_shared<Value>(*var);
 							var->upconvert(Type::List);
@@ -973,26 +1048,27 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 							}},
 
 								// collection functions
-									{"length", [](const List& args) {
-										if (args.size() == 0 || (int)args[0]->getType() < (int)Type::String) {
-											return std::make_shared<Value>(Int(0));
-										}
-										if (args[0]->getType() == Type::String) {
-											return std::make_shared<Value>((Int)args[0]->getString().size());
-										}
-										if (args[0]->getType() == Type::Array) {
-											return std::make_shared<Value>((Int)args[0]->getArray().size());
-										}
-										if (args[0]->getType() == Type::Set) {
-											return std::make_shared<Value>((Int)args[0]->getSet()->size());
-										}
-										if (args[0]->getType() == Type::Map) {
-											return std::make_shared<Value>((Int)args[0]->getDictionary()->size());
-										}
+								{"length", [](const List& args) {
+									if (args.size() == 0 || (int)args[0]->getType() < (int)Type::String) {
+										return std::make_shared<Value>(Int(0));
+									}
+									if (args[0]->getType() == Type::String) {
+										// Return Unicode code point count, not byte count
+										return std::make_shared<Value>((Int)utf8Length(args[0]->getString()));
+									}
+									if (args[0]->getType() == Type::Array) {
+										return std::make_shared<Value>((Int)args[0]->getArray().size());
+									}
+									if (args[0]->getType() == Type::Set) {
+										return std::make_shared<Value>((Int)args[0]->getSet()->size());
+									}
+									if (args[0]->getType() == Type::Map) {
+										return std::make_shared<Value>((Int)args[0]->getDictionary()->size());
+									}
 										if (args[0]->getType() == Type::List) {
 											return std::make_shared<Value>((Int)args[0]->getList().size());
 										}
-										throw;
+										throw Exception("Malformed syntax: unexpected token");
 										}},
 
 									{"find", [](const List& args) {
@@ -1586,7 +1662,7 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 		}
 		return returnVal ? returnVal : std::make_shared<Value>();
 	}
-	default: throw;
+	default: throw Exception("Malformed syntax: unexpected token");
 	}
 
 	//empty func
@@ -1711,7 +1787,7 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 		}
 
 		if (args.size() > fnc->argNames.size()) {
-			throw;
+			throw Exception("Malformed syntax: unexpected token");
 		}
 
 		bool isTyped = false;
@@ -1734,25 +1810,25 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			if (i < args.size()) {
 				// Positional argument provided
 				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->types.at(argName))) {
-					throw;
+					throw Exception("Malformed syntax: unexpected token");
 				}
 				ref = args[i];
 			} else if (namedArgs.count(argName)) {
 				// Named argument provided
 				auto val = namedArgs.at(argName);
 				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
-					throw;
+					throw Exception("Malformed syntax: unexpected token");
 				}
 				ref = val;
 			} else if (fnc->defValues.contains(argName)) {
 				// Default value
 				auto val = getValue(fnc->defValues[argName], scope, classs);
 				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
-					throw;
+					throw Exception("Malformed syntax: unexpected token");
 				}
 				ref = val;
 			} else {
-				throw;
+				throw Exception("Malformed syntax: unexpected token");
 			}
 		}
 
@@ -1765,7 +1841,7 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			}
 			for (size_t i = fnc->argNames.size() - 1; i < args.size(); i++) {
 				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->variableArgsParamType.value())) {
-					throw;
+					throw Exception("Malformed syntax: unexpected token");
 				}
 				vargs.push_back(args[i]);
 			}
@@ -2008,7 +2084,7 @@ FunctionRef IkigaiScriptInterpreter::resolveFunction(const std::string& name, Sc
 //this should call after set default arguments and pack args...
 bool IkigaiScriptInterpreter::checkTypesInFunction(FunctionRef func, const List& args) {
 	if (func->argNames.size() != args.size()) {
-		throw;
+		throw Exception("Malformed syntax: unexpected token");
 	}
 	if (func->argTypes.empty()) {
 		// it must be last in funcs overrides
@@ -2103,6 +2179,12 @@ TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name
 	else if (name == "Dynamic") {
 		desc.isDynamic = true; return desc;
 	}
+	else if (name == "Char") {
+		desc.type = Type::Char; return desc;
+	}
+	else if (name == "Tuple") {
+		desc.type = Type::Tuple; return desc;
+	}
 	else {
 		desc.type = Type::Class;
 		desc.subtype = name;
@@ -2123,7 +2205,7 @@ TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name
 			scope = scope->parent;
 		}
 	}
-	throw;
+	throw Exception("Malformed syntax: unexpected token");
 }
 
 BlockResult IkigaiScriptInterpreter::needsToReturn(ExpressionPtr exp, ScopePtr scope, Class* classs) {
@@ -2228,7 +2310,20 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		return exp;
 	case ExpressionType::MemberVariable: {
 		auto expr = static_cast<MemberVariable*>(exp);
-		auto classToUse = expr->object ? getValue(expr->object, scope, classs)->getClass().get() : classs;
+		auto objVal = expr->object ? getValue(expr->object, scope, classs) : nullptr;
+		// Tuple element access via .0, .1, etc.
+		if (objVal && (objVal->getType() == Type::Tuple)) {
+			bool allDigits = !expr->name.empty();
+			for (char c : expr->name) { if (!isdigit(c)) { allDigits = false; break; } }
+			if (allDigits) {
+				Int idx = (Int)std::stoi(expr->name);
+				auto& items = objVal->getTuple();
+				if (idx < 0 || idx >= (Int)items.size())
+					throw Exception("Tuple index " + std::to_string(idx) + " out of range (size " + std::to_string(items.size()) + ")");
+				return arena.make<ValueNode>(items[idx]);
+			}
+		}
+		auto classToUse = objVal ? objVal->getClass().get() : classs;
 		return arena.make<ValueNode>(resolveVariable(expr->name, classToUse, scope));
 	}
 	case ExpressionType::MemberFunctionCall: {
@@ -2409,6 +2504,18 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			} break;
 			default: break;
 			}
+		} else if (list->getType() == Type::Range) {
+			auto& rv = list->getRange();
+			Int limit = rv.inclusive ? rv.end_ : rv.end_ - 1;
+			for (Int i = rv.start; i <= limit; ++i) {
+				handleIteration(idx++, nullptr, std::make_shared<Value>(i));
+				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+			}
+		} else if (list->getType() == Type::Tuple) {
+			for (auto&& in : list->getTuple()) {
+				handleIteration(idx++, nullptr, in);
+				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+			}
 		}
 		
 		closeScope(scope);
@@ -2476,6 +2583,69 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			return returnDefExpr();
 			//return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
 		}
+	}
+	break;
+	case ExpressionType::Match:
+	{
+		auto* matchExpr = static_cast<MatchExpression*>(exp);
+		ValuePtr target = getValue(matchExpr->target, scope, classs);
+		for (size_t armIdx = 0; armIdx < matchExpr->arms.size(); ++armIdx) {
+			auto& arm = matchExpr->arms[armIdx];
+			bool matches = false;
+			if (arm.pattern == nullptr) {
+				matches = true;  // default arm
+			} else {
+				ValuePtr pattern = getValue(arm.pattern, scope, classs);
+				// Range pattern: if pattern is a Range, check if target is in [start, end]
+				if (pattern->getType() == Type::Range) {
+					auto& rv = pattern->getRange();
+					Int tInt = 0;
+					if (target->getType() == Type::Int) tInt = target->getInt();
+					else if (target->getType() == Type::Float) tInt = (Int)target->getFloat();
+					else { matches = false; goto nextArm; }
+					matches = rv.inclusive ? (tInt >= rv.start && tInt <= rv.end_)
+					                       : (tInt >= rv.start && tInt < rv.end_);
+					goto nextArm;
+				}
+				// Simple equality match
+				if (target->getType() != pattern->getType()) {
+					if (target->getType() == Type::Int && pattern->getType() == Type::Float)
+						matches = ((Float)target->getInt() == pattern->getFloat());
+					else if (target->getType() == Type::Float && pattern->getType() == Type::Int)
+						matches = (target->getFloat() == (Float)pattern->getInt());
+				} else {
+					switch (target->getType()) {
+					case Type::Int:    matches = target->getInt()    == pattern->getInt();    break;
+					case Type::Float:  matches = target->getFloat()  == pattern->getFloat();  break;
+					case Type::Bool:   matches = target->getBool()   == pattern->getBool();   break;
+					case Type::Char:   matches = target->getChar()   == pattern->getChar();   break;
+					case Type::String: matches = target->getString() == pattern->getString(); break;
+					default: break;
+					}
+				}
+			}
+			nextArm:
+			if (matches) {
+				scope = newScope("match_arm", scope);
+				auto r = needsToReturn(arm.body, scope, classs);
+				checkLoopInterupt = r.interrupt;
+				closeScope(scope);
+				if (r.explicitReturn) return arena.make<ValueNode>(r.explicitReturn, ExpressionType::Return);
+				if (r.lastValue)      return arena.make<ValueNode>(r.lastValue, ExpressionType::Value);
+				return returnDefExpr();
+			}
+		}
+		throw Exception("Match: no arm matched for the given value");
+	}
+	break;
+	case ExpressionType::TupleLiteral:
+	{
+		auto* tupleExpr = static_cast<TupleLiteralExpression*>(exp);
+		List items;
+		for (auto& elem : tupleExpr->elements) {
+			items.push_back(getValue(elem, scope, classs));
+		}
+		return arena.make<ValueNode>(std::make_shared<Value>(Value::makeTuple(std::move(items))), ExpressionType::Value);
 	}
 	break;
 	case ExpressionType::Block:

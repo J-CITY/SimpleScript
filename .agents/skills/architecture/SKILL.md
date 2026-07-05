@@ -203,13 +203,96 @@ Use `parseNumericLiteral` (not `toDouble`) anywhere a raw token is converted to 
 
 | Issue | Status |
 |---|---|
-| `parsingImpl.hpp` is a legacy duplicate of some parser logic | Exists for backward compat; keep in sync when modifying `parser.cpp` |
+| `parsingImpl.hpp` is a legacy duplicate of some parser logic — NOT INCLUDED | Dead code; never `#include`-d. Kept for reference; changes to `parser.cpp` do NOT need to be synced there. |
 | `var x;` (declaration without assignment) may crash in `consolidated()` DefineVar if `defineExpression == nullptr` | Not reproduced, but potential null-deref on `val->getType()` |
-| `ReadLine` lambda brace tracking via `parseLambdaBrakets` | Fixed; `{`/`}` inside ReadLine now properly tracked |
+| `ReadLine` implicit statement termination via `}` | Fixed; `}` in ReadLine with no pending `{` triggers implicit `;` then closes scope inline, no recursion |
+| Match expression form in getExpression inner loop — double evaluation | Fixed via `getExpressionDepth` counter + `closeCurrentExpression()` only updates `previousExpression` when currentExpression is non-null |
+| `t.0` member access tokenization | Fixed; lexer only treats `.<digit>` as float continuation when the PRECEDING char is also a digit, not an identifier |
 
 ---
 
-## 11. Decorator System
+## 11. Match Expression (Rust-like)
+
+**Syntax:**
+```simplescript
+match (n) {
+    case 1 => { "one"; }
+    case 1..5 => { "small"; }   // range pattern
+    case _ => { "other"; }       // wildcard (same as default)
+    default => { "other"; }      // also valid
+};
+var r = match (n) { case 1 => { 100; } default => { 0; } };  // expression form
+```
+
+**AST:** `MatchExpression { target, arms: Vec<MatchArm { pattern, body }>}` in `expressions.hpp`. `MatchArm.pattern == nullptr` = default/wildcard arm.
+
+**Parser states:** `ParseState::MatchCall` (collect scrutinee), `ParseState::MatchCasePattern` (collect pattern until `=>`), `ParseState::MatchDefault` (wait for `=>`).
+
+**Parser gotcha — `getExpressionDepth`:** When `match` is inside `getExpression`'s inner parse loop (e.g. `var r = match ...`), the outer `}` of the match body must NOT evaluate the match early. The counter `parser->getExpressionDepth` is incremented before the inner parse loop and decremented after. The `BeginExpression` top-of-turn check skips evaluation for `}` tokens when `getExpressionDepth > 0 && previousExpression->type == Match`.
+
+**`closeCurrentExpression()` gotcha:** This method now only sets `previousExpression = currentExpression` when `currentExpression != nullptr`. This prevents `previousExpression` from being cleared to null when called with a nil currentExpression.
+
+**Patterns:** literals, Range values (`..`/`..=`), wildcard `_`.
+
+---
+
+## 12. Range Expressions
+
+**Syntax:** `1..5` (exclusive [1,5)), `1..=5` (inclusive [1,5]). Used in for-in loops and as array/list index for slicing.
+
+**Type:** `Type::Range`. Stored in `Value::value.asRange` as `RangeValue { Int start, Int end_, bool inclusive }`. `getRange()` accessor.
+
+**Lexer fix:** `..=` is checked before `..` in `lexer.cpp` (and `parsingImpl.hpp`'s `Tokenize`) to avoid partial match. `1..5` tokenizes as `1`, `..`, `5` — lexer stops decimal-float continuation at `..` (when preceding char is a digit AND next char is `.`).
+
+**Operators:** `".."` and `"..="` stdlib handlers create `RangeValue`. `OperatorPrecedence::range` (between `compare` and `addsub`).
+
+**ForEach:** Range values are iterable — the `ForEach` consolidated case handles `Type::Range` by iterating `start..(inclusive?end_:end_-1)`.
+
+**Slicing:** `arr[1..3]` uses `listindex` which detects `Type::Range` index and slices the container. String slicing uses byte indices (Unicode-safe for multi-byte chars via `utf8Slice`).
+
+---
+
+## 13. Tuples
+
+**Syntax:** `(a, b, c)` — detected in `getExpression` by pre-scanning for top-level commas inside `(...)`. Returns `TupleLiteralExpression { elements }`. `Type::Tuple` stored as `asList` (reuses List payload).
+
+**Access:** `t.0`, `t.1` etc. — `MemberVariable` consolidated case checks `Type::Tuple`, parses member name as digit index, returns `getTuple()[idx]`.
+
+**Lexer gotcha:** `t.0` was being tokenized as `t` + `.0` (float). Fixed: `Lexer::Tokenize` only treats `.<digit>` as decimal continuation when the preceding CHARACTER is also a digit, not an identifier letter.
+
+**`Value::makeTuple`:** Static factory — creates Value with `Type::Tuple` and places items in `asList`. Use `getTuple()` to access the list.
+
+---
+
+## 14. Unicode
+
+**`utf8Utils.hpp`:** Provides `decodeCodePoint`, `encodeCodePoint`, `utf8Length`, `utf8At`, `utf8Slice`.
+
+**Char literals:** Parser now uses `decodeCharLiteral(val)` (from `utf8Utils.hpp`) instead of `val[0]`, correctly decoding multi-byte UTF-8 and `\u{XXXX}` escapes.
+
+**`getPrintString()`:** Chars are UTF-8 encoded (not `?` for non-ASCII). `string` passthrough. Ranges/tuples have dedicated formats.
+
+**`length(s)`:** Returns Unicode code point count via `utf8Length`, not byte count.
+
+**`s[i]`:** Returns `Char` at code point index `i` via `utf8At` (string indexing in `listindex`).
+
+**Escape sequences:** `replaceWhitespaceLiterals` handles `\\`, `\"`, `\'`, `\n`, `\r`, `\t`, `\u{XXXX}`.
+
+**`Char` type annotation:** `checkTypeInScope("Char") → Type::Char`.
+
+---
+
+## 15. Generics (current state)
+
+**Syntax:** `fun identity<T>(x: T): T { return x; }`. On call: monomorphizes via text substitution + re-parse.
+
+**Limitation:** Only bare `T` type parameters are inferred (not `List<T>` etc.). No generic classes. No explicit instantiation `f<Int>(x)`.
+
+**Tests:** `GenericsTests.cpp` — 6 smoke tests for basic monomorphization.
+
+---
+
+## 16. Decorator System
 
 Variables, functions, class scopes, and their members can be decorated with `@name` or `@name(args)`. Decorators are stored in:
 - `scope->scopeMetadata` (class-level)
@@ -219,6 +302,6 @@ Decorators are **metadata only** — they do not affect runtime semantics; they 
 
 ---
 
-## 12. Visitor Pattern (External Consumers)
+## 17. Visitor Pattern (External Consumers)
 
 For bytecode compilers or visual editors, use the **Visitor** pattern — do NOT embed code-gen or UI logic into AST nodes. AST nodes must expose data through `accept(Visitor&)` interfaces for analytical passes.

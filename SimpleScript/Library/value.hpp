@@ -24,6 +24,7 @@ namespace IkigaiScript {
             SetRef asSet;
             DictionaryRef asDictionary;
             ClassRef asClass;
+            RangeValue asRange;
 
             Payload() {}
             ~Payload() {}
@@ -35,7 +36,8 @@ namespace IkigaiScript {
             case Type::Coro: value.asCoro.~shared_ptr(); break;
             case Type::String: value.asString.~basic_string(); break;
             case Type::Array: value.asArray.~Array(); break;
-            case Type::List: value.asList.~vector(); break;
+            case Type::List:
+            case Type::Tuple: value.asList.~vector(); break;
             case Type::Set: value.asSet.~shared_ptr(); break;
             case Type::Map: value.asDictionary.~shared_ptr(); break;
             case Type::Class: value.asClass.~shared_ptr(); break;
@@ -60,6 +62,8 @@ namespace IkigaiScript {
             case Type::Set: new (&value.asSet) SetRef(o.value.asSet); break;
             case Type::Map: new (&value.asDictionary) DictionaryRef(o.value.asDictionary); break;
             case Type::Class: new (&value.asClass) ClassRef(o.value.asClass); break;
+            case Type::Tuple: new (&value.asList) List(o.value.asList); break;
+            case Type::Range: new (&value.asRange) RangeValue(o.value.asRange); break;
             default: break;
             }
         }
@@ -81,6 +85,8 @@ namespace IkigaiScript {
             case Type::Set: new (&value.asSet) SetRef(std::move(o.value.asSet)); break;
             case Type::Map: new (&value.asDictionary) DictionaryRef(std::move(o.value.asDictionary)); break;
             case Type::Class: new (&value.asClass) ClassRef(std::move(o.value.asClass)); break;
+            case Type::Tuple: new (&value.asList) List(std::move(o.value.asList)); break;
+            case Type::Range: new (&value.asRange) RangeValue(std::move(o.value.asRange)); break;
             default: break;
             }
         }
@@ -102,6 +108,15 @@ namespace IkigaiScript {
         explicit Value(DictionaryRef a) { typeDescriptor = TypeDescriptor{ Type::Map, true, false, true, false }; new (&value.asDictionary) DictionaryRef(a); }
         explicit Value(ClassRef a) { typeDescriptor = TypeDescriptor{ Type::Class, true, false, true, false }; new (&value.asClass) ClassRef(a); }
         explicit Value(ValuePtr o) { copyFrom(*o); }
+        explicit Value(RangeValue a) { typeDescriptor = TypeDescriptor{ Type::Range, true, false, true, false }; new (&value.asRange) RangeValue(a); }
+        // Tuple: constructed from a List, stored as asList with Type::Tuple
+        static Value makeTuple(List items) {
+            Value v;
+            v.destroy();
+            v.typeDescriptor = TypeDescriptor{ Type::Tuple, true, false, true, false };
+            new (&v.value.asList) List(std::move(items));
+            return v;
+        }
 
         Value(const Value& o) { copyFrom(o); }
         Value(Value&& o) noexcept { moveFrom(std::move(o)); }
@@ -153,6 +168,9 @@ namespace IkigaiScript {
         ClassRef& getClass() {
             return value.asClass;
         }
+
+        RangeValue& getRange() { return value.asRange; }
+        List& getTuple() { return value.asList; }  // stored in asList
         
         bool getBool() {
             bool truthiness = false;

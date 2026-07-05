@@ -655,4 +655,48 @@ namespace IkigaiScript {
 			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
 		}
 	};
+
+	// --- Match (Rust-like) ---
+
+	struct MatchArm {
+		ExpressionPtr pattern = nullptr;  // null = default arm
+		std::vector<ExpressionPtr> body;
+	};
+
+	struct MatchExpression : public Expression {
+		ExpressionPtr target = nullptr;
+		std::vector<MatchArm> arms;
+
+		MatchExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Match, par) {}
+
+		ExpressionPtr back() override {
+			return arms.empty() ? nullptr : arms.back().body.back();
+		}
+
+		std::vector<ExpressionPtr>::iterator begin() override {
+			return arms.empty() ? std::vector<ExpressionPtr>::iterator() : arms.back().body.begin();
+		}
+
+		std::vector<ExpressionPtr>::iterator end() override {
+			return arms.empty() ? std::vector<ExpressionPtr>::iterator() : arms.back().body.end();
+		}
+
+		void push_back(ExpressionPtr ref) override {
+			if (!arms.empty()) arms.back().body.push_back(ref);
+		}
+
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& arm : arms) {
+				for (auto& s : arm.body) { if (s == oldNode) s = newNode; }
+			}
+		}
+	};
+
+	// --- Tuple literal ---
+
+	struct TupleLiteralExpression : public Expression {
+		std::vector<ExpressionPtr> elements;
+
+		TupleLiteralExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::TupleLiteral, par) {}
+	};
 }

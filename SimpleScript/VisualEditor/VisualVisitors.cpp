@@ -525,7 +525,7 @@ void CodeGenerator::run(ValueNode& node) {
             for (auto& e : node.inputs) {
                 auto n = CodeEditorContext::Instance().getNextNodeByPin(*e);
                 if (!n) {
-                    throw;
+                    throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
                 }
                 n->run(*this);
                 if (i != node.inputs.size() - 1) {
@@ -541,7 +541,7 @@ void CodeGenerator::run(ValueNode& node) {
             for (auto& e : node.inputs) {
                 auto n = CodeEditorContext::Instance().getNextNodeByPin(*e);
                 if (!n) {
-                    throw;
+                    throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
                 }
                 n->run(*this);
                 if (i != node.inputs.size() - 1) {
@@ -587,7 +587,7 @@ void CodeGenerator::setVar(VariableNode& node) {
 
 void CodeGenerator::setVar(ThisNode& node, PinPtr pin) {
     if (!node.inputs[0]->node) {
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     }
     auto varNode = std::static_pointer_cast<VariableNode>(CodeEditorContext::Instance().getNextNodeByPin(*node.inputs[0]));
 
@@ -683,7 +683,7 @@ void CodeGenerator::run(ThisNode& node)
 {
     auto classNode = std::static_pointer_cast<VariableNode>(CodeEditorContext::Instance().getNextNodeByPin(*node.inputs[0]));
     if (!classNode) {
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     }
     //if (classNode->computedType.type != PinType::Object) {
     //    throw;
@@ -1216,11 +1216,11 @@ void CodeExecutor::run(ValueNode& node) {
 }
 void CodeExecutor::run(VariableNode& node) {
     if (!CodeEditorContext::Instance().initVariables.contains(node.id.Get())) {
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     }
     auto val = CodeEditorContext::Instance().findInScope(node.value);
     if (!val) {
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     }
     expressionValues.push(val);
 };
@@ -1322,7 +1322,7 @@ void CodeExecutor::run(OperatorNode& node) {
     {
         if (id1 > 2 || id2 > 2)
         {
-            throw;
+            throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
         }
         if (id1 > id2)
         {

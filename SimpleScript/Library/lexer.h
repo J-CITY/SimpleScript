@@ -29,7 +29,8 @@ namespace IkigaiScript {
 	inline const std::set<std::string, std::less<>> keyWords = { "if", "else", "for", "while", "foreach", "break", "continue",
 		"var", "const",
 		"class", "fun", "operator", "coroutine", "coro", "return", "yeld",
-		"true", "false", "import"
+		"true", "false", "import",
+		"match", "case", "default", "dynamic"
 	};
 
 	struct Token {

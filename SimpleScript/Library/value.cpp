@@ -627,8 +627,27 @@ std::string Value::getPrintString() const {
     if (getType() == Type::Char) {
         std::string s;
         if (value.asChar <= 0x7F) s += (char)value.asChar;
-        else s += "?";
-        return "'" + s + "'";
+        else {
+            // UTF-8 encode code point
+            char32_t cp = value.asChar;
+            if (cp < 0x80) s += (char)cp;
+            else if (cp < 0x800) { s += (char)(0xC0 | (cp >> 6)); s += (char)(0x80 | (cp & 0x3F)); }
+            else if (cp < 0x10000) { s += (char)(0xE0 | (cp >> 12)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
+            else { s += (char)(0xF0 | (cp >> 18)); s += (char)(0x80 | ((cp >> 12) & 0x3F)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
+        }
+        return s;
+    }
+    if (getType() == Type::Range) {
+        return std::to_string(value.asRange.start) + (value.asRange.inclusive ? "..=" : "..") + std::to_string(value.asRange.end_);
+    }
+    if (getType() == Type::Tuple) {
+        std::string s = "(";
+        for (size_t i = 0; i < value.asList.size(); ++i) {
+            if (i > 0) s += ", ";
+            s += value.asList[i]->getPrintString();
+        }
+        s += ")";
+        return s;
     }
     auto t = *this;
     t.hardconvert(Type::String);

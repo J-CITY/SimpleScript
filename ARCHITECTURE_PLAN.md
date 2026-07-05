@@ -45,41 +45,29 @@
 2. **Обновление AST**: Меняем `std::shared_ptr<Expression>` на `Expression*` (через Arena placement new).
 3. **Visual Editor**: Адаптируем `VisualNodes.cpp`, создаем Арену внутри редактора нод.
 
---------------------------------
-+enums
-+for (a : array) {}
-+var a = if (COND) { 123 } else { 321}
-+var a = for (x : array) { x * 42 }
-+многострочные строки
-+эмодзи
-+"Score: {ToString(Score)}" 
-+var result = {
-    Temp = ComputeIntermediate();
-    Adjustment = CalculateAdjustment(Temp);
-    Temp + Adjustment;
-}
-Y = X = 5
-- инициализация полей функций через f(a=1)
-- лямбда
-
 -----------------------------------
--Generics
-transaction
-
-char ?
-
-
-switch case
-Range Expressions
-Array Slicing
-Variance
-Tuples
-
--модули
--- наследование
 тесты коментарии
 
+
+Что пока не Unicode-aware
+
+- Слайсинг и range(str, ...) — байты, что для кириллицы/эмодзи даст неожиданные результаты при тех же индексах, что у -= 
+
+- length/s[i].
+
+- Большинство строковых операций (find, replace, конкатенация +) — работают на уровне std::string, то есть байтов.
+
+transaction
+
+-модули
+
+-- наследование
+
 defer
+
 live переменные
+
 concurrency
+
+
 

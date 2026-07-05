@@ -51,14 +51,14 @@ ValuePtr CodeEditorContext::findInScope(const std::string& id) {
 
 void CodeEditorContext::addInScope(const std::string& id, ValuePtr val) {
     if (current->variables.contains(id)) {
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     }
     current->variables[id] = val;
 }
 
 void CodeEditorContext::updateInScope(const std::string& id, ValuePtr val) {
     if (!current->variables.contains(id)) {
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     }
     current->variables[id] = val;
 }

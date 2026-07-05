@@ -57,6 +57,10 @@ namespace IkigaiScript {
 			return "map";
 		case Type::Class:
 			return "class";
+		case Type::Range:
+			return "range";
+		case Type::Tuple:
+			return "tuple";
 		default:
 			return "unknown";
 		}
@@ -293,7 +297,8 @@ namespace IkigaiScript {
 	enum class OperatorPrecedence : int {
 		assign = 0,
         boolean,
-		compare,        
+		compare,
+		range,
 		addsub,
 		muldiv,
 		incdec,
@@ -329,6 +334,13 @@ namespace IkigaiScript {
         ScopedLambda,
         ClassLambda
     };
+
+    // Range value type: start..end (exclusive) or start..=end (inclusive)
+    struct RangeValue {
+        Int start = 0;
+        Int end_ = 0;   // end_ to avoid conflict with std::end
+        bool inclusive = false;  // false = .., true = ..=
+    };
 	
 	struct Function {
         OperatorPrecedence opPrecedence;
@@ -358,6 +370,9 @@ namespace IkigaiScript {
         }
 
 		static OperatorPrecedence getPrecedence(const std::string& n) {
+			if (n == ".." || n == "..=") {
+				return OperatorPrecedence::range;
+			}
 			if (n.size() > 2) {
 				return OperatorPrecedence::func;
 			}

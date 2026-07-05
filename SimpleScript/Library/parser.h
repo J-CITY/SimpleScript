@@ -47,6 +47,7 @@ namespace IkigaiScript {
 		int parseLambda = 0;
 		int parseLambdaBrakets = 0;
 		int genericBodyNesting = 0;
+		int getExpressionDepth = 0;  // incremented during getExpression inner parse loops
 		
 		std::vector<Metadata> pendingMetadata;
 	};

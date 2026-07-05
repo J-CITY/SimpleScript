@@ -53,8 +53,21 @@ std::vector<std::string_view> Tokenize(std::string_view input) {
 	size_t lpos = 0;
 	while ((pos = findFirstOf(input, lpos, GrammarChars)) != std::string::npos) {
 		size_t len = pos - lpos;
-		// differentiate between decimals and dot syntax for function calls
-		if (input[pos] == '.' && pos + 1 < input.size() && contains(NumChars, input[pos + 1])) {
+		// Handle range operators '..' and '..=' before decimal check
+		if (input[pos] == '.' && pos + 1 < input.size() && input[pos + 1] == '.') {
+			if (len) {
+				ret.push_back(input.substr(lpos, len));
+			}
+			int stride = 2;
+			if (pos + 2 < input.size() && input[pos + 2] == '=') stride = 3;
+			ret.push_back(input.substr(pos, stride));
+			lpos = pos + stride;
+			continue;
+		}
+		// differentiate between decimals and dot syntax for member access / function calls
+		// Only treat '.<digit>' as decimal continuation if the char before '.' is also a digit (not an identifier)
+		if (input[pos] == '.' && pos + 1 < input.size() && contains(NumChars, input[pos + 1])
+			&& (pos == 0 || isNumChar(input[pos - 1]))) {
 			pos = findFirstOf(input, pos +  1, GrammarChars);
 			ret.push_back(input.substr(lpos, pos - lpos));
 			lpos = pos;
@@ -731,13 +744,39 @@ void Parser::parse(std::string_view token) {
 		} else if (token == "else") {
 			parseState = ParseState::ExpectIfEnd;
 			wasElse = true;
+		} else if (token == "match") {
+			parseState = ParseState::MatchCall;
+			if (currentExpression) {
+				auto newexpr = arena.make<MatchExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			} else {
+				currentExpression = arena.make<MatchExpression>();
+			}
+		} else if (token == "case") {
+			if (!currentExpression && previousExpression && previousExpression->type == ExpressionType::Match) {
+				currentExpression = previousExpression;
+			}
+			if (currentExpression && currentExpression->type == ExpressionType::Match) {
+				static_cast<MatchExpression*>(currentExpression)->arms.push_back(MatchArm{});
+				parseState = ParseState::MatchCasePattern;
+			}
+		} else if (token == "default") {
+			if (!currentExpression && previousExpression && previousExpression->type == ExpressionType::Match) {
+				currentExpression = previousExpression;
+			}
+			if (currentExpression && currentExpression->type == ExpressionType::Match) {
+				static_cast<MatchExpression*>(currentExpression)->arms.push_back(MatchArm{});
+				parseState = ParseState::MatchDefault;
+			}
 		} else if (token == "class") {
 			parseState = ParseState::DefineClass;
 		} else if (token == "{") {
 			parseScope = newScope("__anon"s, parseScope);
 			clearParseStacks();
 		} else if (token == "}") {
-			wasElse = !currentExpression || currentExpression->type != ExpressionType::IfElse;
+			wasElse = !currentExpression || (currentExpression->type != ExpressionType::IfElse
+				&& currentExpression->type != ExpressionType::Match);
 			bool wasFreefunc = !currentExpression || (currentExpression->type == ExpressionType::FunctionDef
 				&& static_cast<FunctionExpression*>(currentExpression)->function->getFunction()->type == FunctionType::free);
 			closedExpr = closeCurrentExpression();
@@ -869,7 +908,38 @@ void Parser::parse(std::string_view token) {
 		}
 		break;
 	case ParseState::ReadLine:
-		if (token == ";") {
+		if (token == "{") {
+			parseLambdaBrakets++;
+			parseStrings.push_back(token);
+		} else if (token == "}") {
+			if (parseLambdaBrakets == 0) {
+				if (!parseStrings.empty()) {
+					auto line = move(parseStrings);
+					clearParseStacks();
+					if (!currentExpression) {
+						getValue(line, parseScope, nullptr);
+					} else {
+						currentExpression->push_back(getExpression(line, parseScope, nullptr));
+					}
+				} else {
+					clearParseStacks();
+				}
+				// Inline BeginExpression '}' handling (no recursion)
+				parseState = ParseState::BeginExpression;
+				bool closedExpr = closeCurrentExpression();
+				if (!closedExpr || parseScope->name == "__anon") {
+					closeScope(parseScope);
+				}
+				if (previousExpression && previousExpression->type != ExpressionType::IfElse
+					&& previousExpression->type != ExpressionType::Match) {
+					closedExpr = false;
+				}
+				lastStatementClosedScope = closedExpr;
+			} else {
+				parseLambdaBrakets--;
+				parseStrings.push_back(token);
+			}
+		} else if (token == ";") {
 			auto line = move(parseStrings);
 			clearParseStacks();
 			// we clear before evaluating lines so any exceptions can clear the offending code
@@ -905,6 +975,34 @@ void Parser::parse(std::string_view token) {
 			clearParseStacks();
 			throw Exception("Malformed Syntax: Incorrect token `" + std::string(token) + "` following `else` keyword");
 		}
+		break;
+	case ParseState::MatchCall:
+		if (token == ")") {
+			if (--outerNestLayer <= 0) {
+				static_cast<MatchExpression*>(currentExpression)->target =
+					getExpression(move(parseStrings), parseScope, nullptr);
+				clearParseStacks();
+			} else { parseStrings.push_back(token); }
+		} else if (token == "(") {
+			if (++outerNestLayer > 1) parseStrings.push_back(token);
+		} else {
+			parseStrings.push_back(token);
+		}
+		break;
+	case ParseState::MatchCasePattern:
+		if (token == "=>") {
+			auto* matchExpr = static_cast<MatchExpression*>(currentExpression);
+			if (parseStrings.size() == 1 && parseStrings[0] == "_") {
+				matchExpr->arms.back().pattern = nullptr;
+			} else {
+				matchExpr->arms.back().pattern = getExpression(move(parseStrings), parseScope, nullptr);
+			}
+			clearParseStacks();
+		} else { parseStrings.push_back(token); }
+		break;
+	case ParseState::MatchDefault:
+		if (token == "=>") { clearParseStacks(); }
+		else { parseStrings.push_back(token); }
 		break;
 	case ParseState::Decorator:
 		pendingMetadata.push_back(Metadata{std::string(token)});

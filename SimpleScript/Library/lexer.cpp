@@ -46,8 +46,23 @@ std::vector<std::string_view> Lexer::Tokenize(std::string_view input) {
 	size_t lpos = 0;
 	while ((pos = findFirstOf(input, lpos, GrammarChars)) != std::string::npos) {
 		size_t len = pos - lpos;
-		// differentiate between decimals and dot syntax for function calls
-		if (input[pos] == '.' && pos + 1 < input.size() && contains(NumChars, input[pos + 1])) {
+		// Handle range operators '..' and '..=' before decimal check
+		if (input[pos] == '.' && pos + 1 < input.size() && input[pos + 1] == '.') {
+			if (len) {
+				ret.push_back(input.substr(lpos, len));
+				lpos = pos;
+			}
+			int stride = 2;
+			if (pos + 2 < input.size() && input[pos + 2] == '=') stride = 3;
+			ret.push_back(input.substr(pos, stride));
+			lpos = pos + stride;
+			pos = lpos;
+			continue;
+		}
+		// differentiate between decimals and dot syntax for member access / function calls
+		// Only treat '.<digit>' as decimal continuation if the char before '.' is also a digit (not an identifier)
+		if (input[pos] == '.' && pos + 1 < input.size() && contains(NumChars, input[pos + 1])
+			&& (pos == 0 || isNumChar(input[pos - 1]))) {
 			pos = findFirstOf(input, pos + 1, GrammarChars);
 			ret.push_back(input.substr(lpos, pos - lpos));
 			lpos = pos;
@@ -219,6 +234,10 @@ namespace {
 						else throw Exception("Invalid number format");
 					}
 					else if (input[pos] == '.') {
+						// Check for '..' or '..=' range operator: stop number here
+						if (pos + 1 < input.size() && input[pos + 1] == '.') {
+							goto numDone;
+						}
 						state = ParseIntState::Float;
 						type = TokenType::NumFloat;
 					}
@@ -235,6 +254,10 @@ namespace {
 					if (!isNumChar(input[pos])) throw Exception("Invalid number format");
 					break;
 				case ParseIntState::Float:
+					if (input[pos] == '.') {
+						// Second dot — start of '..' operator, stop the number here
+						goto numDone;
+					}
 					if (isNumChar(input[pos])) {}
 					else if (input[pos] == 'e' || input[pos] == 'E') {
 						state = ParseIntState::ExpSign;
@@ -250,6 +273,7 @@ namespace {
 				}
 				pos++;
 			}
+			numDone:
 			ret.push_back({ input.substr(startPos, pos - startPos), type });
 			return true;
 		}
@@ -258,6 +282,12 @@ namespace {
 
 	bool tryParseCompoundOperator(std::string_view input, size_t& pos, std::vector<Token>& ret, bool& isComment) {
 		auto remaining = input.substr(pos);
+		// ..= must be checked before .. to avoid partial match
+		if (remaining.starts_with("..=")) {
+			ret.push_back({ remaining.substr(0, 3), TokenType::Operator });
+			pos += 3;
+			return true;
+		}
 		if (remaining.starts_with("..")) {
 			ret.push_back({ remaining.substr(0, 2), TokenType::Operator });
 			pos += 2;

@@ -3,6 +3,7 @@
 #include "lexer.h"
 #include "exception.h"
 #include "expressions.hpp"
+#include "utf8Utils.hpp"
 #include <fstream>
 #include <iostream>
 
@@ -366,7 +367,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 		else if (isCharLiteral(strings[i])) {
 			auto val = std::string(strings[i].substr(1, strings[i].size() - 2));
 			replaceWhitespaceLiterals(val);
-			char32_t c = val.empty() ? 0 : val[0]; // simple utf8 -> char32 fallback, should use utf8 decoding
+			char32_t c = decodeCharLiteral(val);
 			auto newExpr = interpreter->arena.make<ValueNode>(std::make_shared<Value>(c), ExpressionType::Value);
 			if (root) {
 				static_cast<FunctionExpression*>(root)->subexpressions.push_back(newExpr);
@@ -417,7 +418,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				root = newExpr;
 			}
 		}
-		else if (strings[i] == "if" || strings[i] == "for" || strings[i] == "while") {
+		else if (strings[i] == "if" || strings[i] == "for" || strings[i] == "while" || strings[i] == "match") {
 			auto oldParseScope = parseScope;
 			auto oldCurrentExpr = currentExpression;
 			auto oldParseState = parseState;
@@ -425,7 +426,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
             
 			currentExpression = nullptr;
 			clearParseStacks();
-            
+			++getExpressionDepth;
 			for (size_t j = i; j < strings.size(); ++j) {
 				parse(strings[j]);
 			}
@@ -436,6 +437,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			while (currentExpression) {
 				closeCurrentExpression();
 			}
+			--getExpressionDepth;
 
 			auto parsedStmt = previousExpression;
             
@@ -507,11 +509,54 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				++i;
 				continue;
 			}
-			if (strings[i] == "(" || i + 2 < strings.size() && strings[i + 1] == "(") {
-				// function
-				ExpressionPtr cur = nullptr;
-				if (strings[i] == "(") {
-					if (root) {
+		if (strings[i] == "(" || i + 2 < strings.size() && strings[i + 1] == "(") {
+			// function
+			ExpressionPtr cur = nullptr;
+			if (strings[i] == "(") {
+				// Detect tuple literal: (a, b, ...) at root level
+				if (!root) {
+					// Pre-scan for top-level commas
+					int depth = 0;
+					bool hasTupleComma = false;
+					for (size_t j = i + 1; j < strings.size(); ++j) {
+						if (strings[j] == "(" || strings[j] == "[") ++depth;
+						else if (strings[j] == ")" || strings[j] == "]") {
+							if (depth == 0) break;
+							--depth;
+						}
+						else if (strings[j] == "," && depth == 0) {
+							hasTupleComma = true;
+							break;
+						}
+					}
+					if (hasTupleComma) {
+						// Build TupleLiteralExpression
+						auto tupleExpr = interpreter->arena.make<TupleLiteralExpression>();
+						root = tupleExpr;
+						std::vector<std::string_view> minisub;
+						int nestLayers = 1;
+						while (nestLayers > 0 && ++i < strings.size()) {
+							if (nestLayers == 1 && strings[i] == ",") {
+								if (minisub.size()) {
+									tupleExpr->elements.push_back(parseArg(std::move(minisub)));
+									minisub.clear();
+								}
+							}
+							else if (isClosingBracketOrParen(strings[i])) {
+								if (--nestLayers > 0) { minisub.push_back(strings[i]); }
+								else if (minisub.size()) {
+									tupleExpr->elements.push_back(parseArg(std::move(minisub)));
+									minisub.clear();
+								}
+							}
+							else if (isOpeningBracketOrParen(strings[i])) { ++nestLayers; minisub.push_back(strings[i]); }
+							else { minisub.push_back(strings[i]); }
+						}
+						++i;
+						continue;
+					}
+				}
+				if (root) {
 						if (root->type == ExpressionType::FunctionCall) {
 							if (static_cast<FunctionExpression*>(root)->function->getFunction()->opPrecedence == OperatorPrecedence::func) {
 								cur = interpreter->arena.make<FunctionExpression>(std::make_shared<Value>());
@@ -768,18 +813,18 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 							addedArgs = true;
 						}
 					}
-				else if (strings[i] == ")") {
-					if (--nestLayers > 0) {
-						minisub.push_back(strings[i]);
-					}
-					else {
-						if (minisub.size()) {
-							static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(parseArg(std::move(minisub)));
-							minisub.clear();
+					else if (strings[i] == ")") {
+						if (--nestLayers > 0) {
+							minisub.push_back(strings[i]);
 						}
-						addedArgs = true; // closing ')' reached — set even with 0 args
+						else {
+							if (minisub.size()) {
+								static_cast<MemberFunctionCall*>(expr)->subexpressions.push_back(parseArg(std::move(minisub)));
+								minisub.clear();
+							}
+							addedArgs = true; // closing ')' reached — set even with 0 args
+						}
 					}
-				}
 					else if (strings[i] == "(") {
 						++nestLayers;
 						minisub.push_back(strings[i]);
@@ -876,7 +921,15 @@ void Parser::parse(std::string_view token) {
 	case ParseState::BeginExpression:
 	{
 		if (lastStatementClosedScope && previousExpression) {
-			if (token != "else" && token != "if") {
+			// Skip evaluation if the upcoming token is part of an ongoing compound expression
+			bool skipEval = (token == "else" || token == "if" || token == "case" || token == "default");
+			// Inside getExpression's inner parse loop, skip evaluating a Match when its
+			// outer closing '}' is seen — the match will be returned as an AST node to the caller
+			if (!skipEval && token == "}" && getExpressionDepth > 0
+				&& previousExpression->type == ExpressionType::Match) {
+				skipEval = true;
+			}
+			if (!skipEval) {
 				interpreter->getValue(previousExpression, parseScope, nullptr);
 			}
 			if (token == "if" && previousExpression->type == ExpressionType::IfElse) {
@@ -946,6 +999,38 @@ void Parser::parse(std::string_view token) {
 			parseState = ParseState::ExpectIfEnd;
 			currentExpression = previousExpression;
 		}
+		else if (token == "match") {
+			clearParseStacks();
+			parseState = ParseState::MatchCall;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<MatchExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<MatchExpression>();
+			}
+		}
+		else if (token == "case") {
+			// Restore match expression if between arms
+			if (!currentExpression && previousExpression && previousExpression->type == ExpressionType::Match) {
+				currentExpression = previousExpression;
+			}
+			if (currentExpression && currentExpression->type == ExpressionType::Match) {
+				static_cast<MatchExpression*>(currentExpression)->arms.push_back(MatchArm{});
+				parseState = ParseState::MatchCasePattern;
+			}
+		}
+		else if (token == "default") {
+			// Restore match expression if between arms
+			if (!currentExpression && previousExpression && previousExpression->type == ExpressionType::Match) {
+				currentExpression = previousExpression;
+			}
+			if (currentExpression && currentExpression->type == ExpressionType::Match) {
+				static_cast<MatchExpression*>(currentExpression)->arms.push_back(MatchArm{});  // null pattern = default
+				parseState = ParseState::MatchDefault;
+			}
+		}
 		else if (token == "class") {
 			parseState = ParseState::DefineClass;
 		}
@@ -958,7 +1043,8 @@ void Parser::parse(std::string_view token) {
 			if (!closedExpr || parseScope->name == "__anon") {
 				interpreter->closeScope(parseScope);
 			}
-			if (previousExpression && previousExpression->type != ExpressionType::IfElse) {
+			if (previousExpression && previousExpression->type != ExpressionType::IfElse
+				&& previousExpression->type != ExpressionType::Match) {
 				closedExpr = false;
 			}
 		}
@@ -1140,8 +1226,37 @@ void Parser::parse(std::string_view token) {
 			parseStrings.push_back(token);
 		}
 		else if (token == "}") {
-			parseLambdaBrakets--;
-			parseStrings.push_back(token);
+			if (parseLambdaBrakets == 0) {
+				// Implicit end-of-statement before '}': evaluate pending tokens then close scope
+				if (!parseStrings.empty()) {
+					auto line = move(parseStrings);
+					clearParseStacks();
+					if (!currentExpression) {
+						interpreter->getValue(line, parseScope, nullptr);
+					}
+					else {
+						currentExpression->push_back(getExpression(line, parseScope, nullptr));
+					}
+				}
+				else {
+					clearParseStacks();
+				}
+				// Now perform BeginExpression '}' handling inline (no recursion)
+				parseState = ParseState::BeginExpression;
+				bool closedExpr = closeCurrentExpression();
+				if (!closedExpr || parseScope->name == "__anon") {
+					interpreter->closeScope(parseScope);
+				}
+				if (previousExpression && previousExpression->type != ExpressionType::IfElse
+					&& previousExpression->type != ExpressionType::Match) {
+					closedExpr = false;
+				}
+				lastStatementClosedScope = closedExpr;
+			}
+			else {
+				parseLambdaBrakets--;
+				parseStrings.push_back(token);
+			}
 		}
 		else if (token == ";" && parseLambdaBrakets == 0) {
 			{//ternary operator
@@ -1240,6 +1355,57 @@ void Parser::parse(std::string_view token) {
 		else {
 			clearParseStacks();
 			throw Exception("Malformed Syntax: Incorrect token `" + std::string(token) + "` following `else` keyword");
+		}
+		break;
+	case ParseState::MatchCall:
+		if (token == ")") {
+			if (--outerNestLayer <= 0) {
+				static_cast<MatchExpression*>(currentExpression)->target =
+					getExpression(move(parseStrings), parseScope, nullptr);
+				clearParseStacks();
+			}
+			else {
+				parseStrings.push_back(token);
+			}
+		}
+		else if (token == "(") {
+			if (++outerNestLayer > 1) {
+				parseStrings.push_back(token);
+			}
+		}
+		else {
+			parseStrings.push_back(token);
+		}
+		break;
+	case ParseState::MatchCasePattern:
+		if (token == "=>") {
+			if (!currentExpression || currentExpression->type != ExpressionType::Match) {
+				throw Exception("MatchCasePattern: currentExpression is not Match");
+			}
+			auto* matchExpr = static_cast<MatchExpression*>(currentExpression);
+			if (matchExpr->arms.empty()) {
+				throw Exception("MatchCasePattern: no arms");
+			}
+			// Wildcard '_' pattern = same as default (null pattern)
+			if (parseStrings.size() == 1 && parseStrings[0] == "_") {
+				matchExpr->arms.back().pattern = nullptr;
+			} else {
+				matchExpr->arms.back().pattern = getExpression(move(parseStrings), parseScope, nullptr);
+			}
+			clearParseStacks();
+			// Next token expected: '{' — handled by BeginExpression
+		}
+		else {
+			parseStrings.push_back(token);
+		}
+		break;
+	case ParseState::MatchDefault:
+		if (token == "=>") {
+			clearParseStacks();
+			// Next token expected: '{' — handled by BeginExpression
+		}
+		else {
+			parseStrings.push_back(token);
 		}
 		break;
 	case ParseState::Decorator:
@@ -1481,14 +1647,14 @@ void Parser::parse(std::string_view token) {
 						continue;
 					}
 					if (varArgsValue) { //after variable nums of arg can not set enather var
-						throw;
+						throw Exception("Malformed function argument syntax");
 					}
 					args.emplace_back(parseStrings[i]);
 					i++;
 
 					if (parseStrings.size() > i+2 && parseStrings[i] == "." && parseStrings[i+1] == "." && parseStrings[+2] == ".") {
 						if (parseState == ParseState::OperatorArgs) {
-							throw;
+							throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
 						}
 						//variable number of arguments
 						i += 3;
@@ -1496,14 +1662,14 @@ void Parser::parse(std::string_view token) {
 					}
 
 					if (isTyped && parseStrings.size() > i && parseStrings[i] != ":") {
-						throw;
+						throw Exception("Malformed function argument syntax");
 					}
 					if (!isTyped && parseStrings.size() > i && parseStrings[i] == ":") {
 						if (args.size() == 1) { //function is typed
 							isTyped = true;
 						}
 						else {
-							throw;
+							throw Exception("Malformed function argument syntax");
 						}
 					}
 					if (isTyped) {
@@ -1512,7 +1678,7 @@ void Parser::parse(std::string_view token) {
 					}
 					else {
 						if (hasDefValue && parseStrings.size() > i && parseStrings[i] != "=") {
-							throw;
+							throw Exception("Malformed function argument syntax");
 						}
 						if (parseStrings.size() > i && parseStrings[i] == "=") {
 							hasDefValue = true;
@@ -1530,17 +1696,17 @@ void Parser::parse(std::string_view token) {
 					// Skip comma separator
 					if (parseStrings.size() > i && parseStrings[i] == ",") {
 						if (hasDefValue) {
-							throw; // After default values, all remaining args must have defaults
+							throw Exception("Malformed function argument syntax"); // After default values, all remaining args must have defaults
 						}
 						i++;
 						state = ParseFuncArgs::Arg;
 					}
 					else if (hasDefValue && parseStrings.size() > i && parseStrings[i] != "=") {
-						throw;
+						throw Exception("Malformed function argument syntax");
 					}
 					else if (parseStrings.size() > i && parseStrings[i] == "=") {
 						if (parseState == ParseState::OperatorArgs) {
-							throw;
+							throw Exception("Malformed function argument syntax");
 						}
 						hasDefValue = true;
 						i++;
@@ -1572,15 +1738,16 @@ void Parser::parse(std::string_view token) {
 				{
 				case OperatorPrecedence::boolean:;
 				case OperatorPrecedence::compare:;
+				case OperatorPrecedence::range:;
 				case OperatorPrecedence::addsub:;
 				case OperatorPrecedence::muldiv: { argsSize = 2; break; };
 				case OperatorPrecedence::assign:;
 				case OperatorPrecedence::incdec: { argsSize = 1;  break; }
-				case OperatorPrecedence::func: { throw; }
-				default: { throw; }
+				case OperatorPrecedence::func: { throw Exception("Malformed function argument syntax"); }
+				default: { throw Exception("Malformed function argument syntax"); }
 				}
 				if (argsSize != args.size()) {
-					throw;
+					throw Exception("Malformed function argument syntax");
 				}
 			}
 			auto newfunc = isConstructor ? 
@@ -1593,7 +1760,7 @@ void Parser::parse(std::string_view token) {
 
 			if (parseState == ParseState::CoroArgs) {
 				if (isConstructor || isOperator) {
-					throw;
+					throw Exception("Malformed Syntax: coroutine cannot be a constructor or operator");
 				}
 				newfunc->isCoro = true;
 			}
@@ -1634,7 +1801,7 @@ void Parser::parse(std::string_view token) {
 		{
 			if (token == "{") {
 				if (parseStrings.empty()) {
-					throw;
+					throw Exception("Malformed Syntax: expected return type annotation before `{` in function definition");
 				}
 				if (parseStrings[0] == ":") {
 					auto resType = std::string(parseStrings[1]); // type
@@ -1642,7 +1809,7 @@ void Parser::parse(std::string_view token) {
 					static_cast<FunctionExpression*>(currentExpression)->function->getFunction()->returnType = desc;
 				}
 				else {
-					throw;
+					throw Exception("Malformed Syntax: expected `:` before return type, got `" + std::string(parseStrings[0]) + "`");
 				}
 				
 				auto fnc = static_cast<FunctionExpression*>(currentExpression)->function->getFunction();
@@ -1807,14 +1974,15 @@ void Parser::clearParseStacks() {
 }
 
 bool Parser::closeCurrentExpression() {
-	previousExpression = currentExpression;
 	if (currentExpression) {
+		previousExpression = currentExpression;
 		if (currentExpression->parent) {
 			currentExpression = currentExpression->parent;
 		}
 		else {
 			if (currentExpression->type != ExpressionType::FunctionDef
 				&& currentExpression->type != ExpressionType::IfElse
+				&& currentExpression->type != ExpressionType::Match
 				) {
 				interpreter->getValue(currentExpression, parseScope, nullptr);
 			}

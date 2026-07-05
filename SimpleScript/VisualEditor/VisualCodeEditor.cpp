@@ -738,7 +738,7 @@ OperatorType StringToEnum(const std::string& str) {
     if (str == "&&") return OperatorType::LogicalAnd;
     if (str == "||") return OperatorType::LogicalOr;
 
-    throw;
+    throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
 
     return OperatorType::Minus;
 };
@@ -1451,7 +1451,7 @@ void VisualCodeEditor::createFunctionNode() {
             createFunCall(node);
             return;
         }
-		throw;
+		throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     });
 }
 
@@ -1472,7 +1472,7 @@ void VisualCodeEditor::createClassNode() {
                 createValueNode(Value{ classVal });
                 return;
             }
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     });
     addButton("ClassVariable",
         [n]() -> const std::string& {
@@ -1485,7 +1485,7 @@ void VisualCodeEditor::createClassNode() {
                 createClassInstanceNode(node);
                 return;
             }
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     });
 
     addButton("ClassMethod",
@@ -1497,7 +1497,7 @@ void VisualCodeEditor::createClassNode() {
                 createClassMethodNode(node);
                 return;
             }
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     });
 }
 
@@ -1517,7 +1517,7 @@ void VisualCodeEditor::createClassMethodNode(std::shared_ptr<ClassNode> classNod
                 createMethodCall(node);
                 return;
             }
-        throw;
+        throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
     });
 }
 

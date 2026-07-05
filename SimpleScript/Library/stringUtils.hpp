@@ -96,21 +96,42 @@ namespace IkigaiScript {
 
     inline void replaceWhitespaceLiterals(std::string& input) {
         size_t pos = 0;
-        size_t lpos = 0;
-        while ((pos = input.find('\\', lpos)) != std::string::npos) {
-            if (pos + 1 < input.size()) {
-                switch (input[pos + 1]) {
-                case 't':
-                    input.replace(pos, 2, "\t");
-                    break;
-                case 'n':
-                    input.replace(pos, 2, "\n");
-                    break;
-                default:
-                    break;
-                }
+        while ((pos = input.find('\\', pos)) != std::string::npos) {
+            if (pos + 1 >= input.size()) break;
+            switch (input[pos + 1]) {
+            case 't':  input.replace(pos, 2, "\t"); break;
+            case 'n':  input.replace(pos, 2, "\n"); break;
+            case 'r':  input.replace(pos, 2, "\r"); break;
+            case '\\': input.replace(pos, 2, "\\"); break;
+            case '\'': input.replace(pos, 2, "'"); break;
+            case '"':  input.replace(pos, 2, "\""); break;
+            case 'u': {
+                // \u{XXXX} or \uXXXX
+                size_t start = pos + 2;
+                bool hasBrace = start < input.size() && input[start] == '{';
+                if (hasBrace) ++start;
+                size_t end = start;
+                while (end < input.size() && isxdigit((unsigned char)input[end])) ++end;
+                size_t escLen = end - pos + (hasBrace ? 1 : 0);  // include closing }
+                if (hasBrace && end < input.size() && input[end] == '}') end++;
+                std::string hex = input.substr(start, end - start - (hasBrace ? 1 : 0));
+                if (!hex.empty()) {
+                    unsigned long cp = 0;
+                    for (char c : hex) cp = cp * 16 + (isdigit((unsigned char)c) ? c - '0' : tolower((unsigned char)c) - 'a' + 10);
+                    std::string encoded;
+                    size_t replaceEnd = hasBrace ? end : start + hex.size();
+                    if (cp < 0x80) encoded += (char)cp;
+                    else if (cp < 0x800) { encoded += (char)(0xC0 | (cp >> 6)); encoded += (char)(0x80 | (cp & 0x3F)); }
+                    else if (cp < 0x10000) { encoded += (char)(0xE0 | (cp >> 12)); encoded += (char)(0x80 | ((cp >> 6) & 0x3F)); encoded += (char)(0x80 | (cp & 0x3F)); }
+                    else { encoded += (char)(0xF0 | (cp >> 18)); encoded += (char)(0x80 | ((cp >> 12) & 0x3F)); encoded += (char)(0x80 | ((cp >> 6) & 0x3F)); encoded += (char)(0x80 | (cp & 0x3F)); }
+                    input.replace(pos, replaceEnd - pos, encoded);
+                    pos += encoded.size();
+                } else { ++pos; }
+                continue;
             }
-            lpos = pos;
+            default: ++pos; continue;
+            }
+            // After replacement, single char — no advance needed since we replaced in-place
         }
     }
 
