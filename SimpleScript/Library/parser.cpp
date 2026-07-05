@@ -1654,7 +1654,7 @@ void Parser::parse(std::string_view token) {
 
 					if (parseStrings.size() > i+2 && parseStrings[i] == "." && parseStrings[i+1] == "." && parseStrings[+2] == ".") {
 						if (parseState == ParseState::OperatorArgs) {
-							throw Exception("Expected " + std::string(expect) + " but got " + std::string(vec.front()));
+							throw Exception("Operator can not have variable number of arguments");
 						}
 						//variable number of arguments
 						i += 3;
