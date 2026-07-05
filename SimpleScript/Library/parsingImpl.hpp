@@ -1067,6 +1067,8 @@ void Parser::parse(std::string_view token) {
 						tDescriptor.isDynamic = true;
 					} else {
 						tDescriptor.type = typeDesc.type;
+						tDescriptor.subtype = typeDesc.subtype;
+						tDescriptor.subtype2 = typeDesc.subtype2;
 						tDescriptor.isDynamic = false;
 					}
 					parseStrings.erase(parseStrings.begin());

@@ -7,13 +7,13 @@
 using namespace IkigaiScript;
 
 
-Class::Class(const Class& o) : name(o.name), functionScope(o.functionScope) {
+Class::Class(const Class& o) : name(o.name), functionScope(o.functionScope), baseClasses(o.baseClasses) {
     for (auto&& v : o.variables) {
         variables[v.first] = std::make_shared<Value>(*v.second);
     }
 }
 
-Class::Class(const ScopePtr& o) : name(o->name), functionScope(o) {
+Class::Class(const ScopePtr& o) : name(o->name), functionScope(o), baseClasses(o->baseClasses) {
     for (auto&& v : o->variables) {
         variables[v.first] = std::make_shared<Value>(*v.second);
     }

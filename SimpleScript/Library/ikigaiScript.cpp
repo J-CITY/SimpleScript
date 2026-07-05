@@ -40,7 +40,7 @@ bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
 	throw Exception("Malformed syntax: unexpected token");
 }
 
-bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
+bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2, IkigaiScriptInterpreter* interpreter) {
 	if (t1.isDynamic) {
 		return true;
 	}
@@ -59,14 +59,27 @@ bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
 	auto res = t1.type == t2.type;
 
 	//class check
-	if (t1.type == Type::Class && res) {
+	if (t1.type == Type::Class && t2.type == Type::Class) {
+		if (!t1.subtype || !t2.subtype) {
+			return false;
+		}
 		auto& className1 = std::get<std::string>(t1.subtype.value());
 		auto& className2 = std::get<std::string>(t2.subtype.value());
 		if (className1.empty() || className2.empty()) {
-			throw Exception("Malformed syntax: unexpected token");
+			return false;
 		}
 		if (className1 == className2) {
 			return true;
+		}
+		if (interpreter) {
+			auto scope2 = interpreter->resolveScope(className2, interpreter->getGlobalScope());
+			if (scope2) {
+				for (const auto& base : scope2->baseClasses) {
+					if (base == className1) {
+						return true;
+					}
+				}
+			}
 		}
 		return false;
 	}
@@ -82,12 +95,12 @@ bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2) {
 			if (!t1.subtype2.has_value() || !t2.subtype2.has_value()) {
 				return false;
 			}
-			checkConvertTypes(*t1.subtype2.value(), *t2.subtype2.value());
+			b = b && checkConvertTypes(*t1.subtype2.value(), *t2.subtype2.value(), interpreter);
 		}
 		if (!t1.subtype.has_value() || !t2.subtype.has_value()) {
 			return false;
 		}
-		return b && checkConvertTypes(*std::get<std::shared_ptr<TypeDescriptor>>(t1.subtype.value()), *std::get<std::shared_ptr<TypeDescriptor>>(t2.subtype.value()));
+		return b && checkConvertTypes(*std::get<std::shared_ptr<TypeDescriptor>>(t1.subtype.value()), *std::get<std::shared_ptr<TypeDescriptor>>(t2.subtype.value()), interpreter);
 	}
 	return res;
 }
@@ -255,14 +268,19 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			// For type-locked variables (isInit && !isDynamic), use strict type comparison.
 			// Only Float←Int upcast is allowed. Bool←Int coercion disallowed for assignment.
 			if (args[0]->typeDescriptor.isInit && !args[0]->typeDescriptor.isDynamic) {
-				bool compatible = (args[0]->typeDescriptor.type == args[1]->typeDescriptor.type)
-					|| (args[0]->typeDescriptor.type == Type::Float && args[1]->typeDescriptor.type == Type::Int)
-					|| (args[0]->typeDescriptor.isNullable && args[1]->typeDescriptor.type == Type::Null);
+				bool compatible = false;
+				if (args[0]->typeDescriptor.type == Type::Class) {
+					compatible = checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor, this);
+				} else {
+					compatible = (args[0]->typeDescriptor.type == args[1]->typeDescriptor.type)
+						|| (args[0]->typeDescriptor.type == Type::Float && args[1]->typeDescriptor.type == Type::Int)
+						|| (args[0]->typeDescriptor.isNullable && args[1]->typeDescriptor.type == Type::Null);
+				}
 				if (!compatible) {
 					throw TypeConvertError(args[0]->typeDescriptor, args[1]->typeDescriptor);
 				}
 			} else {
-				if (!checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor)) {
+				if (!checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor, this)) {
 					throw TypeConvertError(args[0]->typeDescriptor, args[1]->typeDescriptor);
 				}
 			}
@@ -1670,6 +1688,9 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 }
 
 ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs) {
+	if (fnc->getBodyType() == FunctionBodyType::Lambda) {
+		return get<Lambda>(fnc->body)(args);
+	}
 	if (!fnc->genericParams.empty()) {
 		std::map<std::string, std::string> genericTypeMap;
 		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
@@ -1787,7 +1808,7 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 		}
 
 		if (args.size() > fnc->argNames.size()) {
-			throw Exception("Malformed syntax: unexpected token");
+			throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:1808) args size " + std::to_string(args.size()) + " expected " + std::to_string(fnc->argNames.size()));
 		}
 
 		bool isTyped = false;
@@ -1809,26 +1830,26 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			}
 			if (i < args.size()) {
 				// Positional argument provided
-				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->types.at(argName))) {
-					throw Exception("Malformed syntax: unexpected token");
+				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->types.at(argName), this)) {
+					throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:1831)");
 				}
 				ref = args[i];
 			} else if (namedArgs.count(argName)) {
 				// Named argument provided
 				auto val = namedArgs.at(argName);
-				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
-					throw Exception("Malformed syntax: unexpected token");
+				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName), this)) {
+					throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:1838)");
 				}
 				ref = val;
 			} else if (fnc->defValues.contains(argName)) {
 				// Default value
 				auto val = getValue(fnc->defValues[argName], scope, classs);
-				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName))) {
-					throw Exception("Malformed syntax: unexpected token");
+				if (isTyped && !checkConvertTypes(val->typeDescriptor, fnc->types.at(argName), this)) {
+					throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:1845)");
 				}
 				ref = val;
 			} else {
-				throw Exception("Malformed syntax: unexpected token");
+				throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:1849)");
 			}
 		}
 
@@ -1840,8 +1861,8 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 				newVars.push_back(fnc->argNames[fnc->argNames.size() - 1]);
 			}
 			for (size_t i = fnc->argNames.size() - 1; i < args.size(); i++) {
-				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->variableArgsParamType.value())) {
-					throw Exception("Malformed syntax: unexpected token");
+				if (isTyped && !checkConvertTypes(args[i]->typeDescriptor, fnc->variableArgsParamType.value(), this)) {
+					throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:1862)");
 				}
 				vargs.push_back(args[i]);
 			}
@@ -1861,9 +1882,39 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 		ValuePtr returnVal = nullptr;
 
 		if (fnc->type == FunctionType::Constructor) {
-			returnVal = std::make_shared<Value>(make_shared<Class>(scope));
-			for (auto&& sub : subexpressions) {
-				getValue(sub, scope, returnVal->getClass().get());
+			auto hasExplicitSuperCall = [](const std::vector<ExpressionPtr>& subs) {
+				for (auto&& sub : subs) {
+					if (sub->type == ExpressionType::FunctionCall) {
+						auto funcExpr = static_cast<FunctionExpression*>(sub);
+						if (funcExpr->function->getType() == Type::String && funcExpr->function->getString() == "super") {
+							return true;
+						}
+					}
+				}
+				return false;
+			};
+
+			bool isBaseConstructorCall = (classs != nullptr);
+			if (isBaseConstructorCall) {
+				for (auto&& sub : subexpressions) {
+					getValue(sub, scope, classs);
+				}
+				returnVal = std::make_shared<Value>();
+			}
+			else {
+				returnVal = std::make_shared<Value>(make_shared<Class>(scope));
+				returnVal->typeDescriptor.subtype = fnc->name;
+				auto activeClasss = returnVal->getClass().get();
+				if (!hasExplicitSuperCall(subexpressions)) {
+					for (const auto& baseClassName : activeClasss->baseClasses) {
+						auto baseScope = resolveScope(baseClassName, globalScope);
+						auto baseCtor = resolveFunction(baseClassName, baseScope);
+						callFunction(baseCtor, scope, {}, activeClasss);
+					}
+				}
+				for (auto&& sub : subexpressions) {
+					getValue(sub, scope, activeClasss);
+				}
 			}
 		}
 		else {
@@ -1897,7 +1948,7 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			}
 		}
 
-		if (fnc->type == FunctionType::Constructor) {
+		if (fnc->type == FunctionType::Constructor && returnVal->getType() == Type::Class) {
 			for (auto&& vr : newVars) {
 				scope->variables.erase(vr);
 				returnVal->getClass()->variables.erase(vr);
@@ -1922,7 +1973,14 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 	case FunctionBodyType::ClassLambda: {
 		scope = resolveScope(fnc->name, scope);
 		if (fnc->type == FunctionType::Constructor) {
+			bool isBaseConstructorCall = (classs != nullptr);
+			if (isBaseConstructorCall) {
+				get<ClassLambda>(fnc->body)(classs, scope, args);
+				closeScope(scope);
+				return std::make_shared<Value>();
+			}
 			auto returnVal = make_shared<Value>(make_shared<Class>(scope));
+			returnVal->typeDescriptor.subtype = fnc->name;
 			get<ClassLambda>(fnc->body)(returnVal->getClass().get(), scope, args);
 			closeScope(scope);
 			return returnVal;
@@ -2023,6 +2081,10 @@ FunctionRef IkigaiScriptInterpreter::newClass(const std::string& name, ScopePtr 
 
 // name resolution for variables
 ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, ScopePtr scope) {
+	if (name == "super") {
+		static ValuePtr superVal = std::make_shared<Value>("super");
+		return superVal;
+	}
 	auto initialScope = scope;
 	while (scope) {
 		auto iter = scope->variables.find(name);
@@ -2084,7 +2146,7 @@ FunctionRef IkigaiScriptInterpreter::resolveFunction(const std::string& name, Sc
 //this should call after set default arguments and pack args...
 bool IkigaiScriptInterpreter::checkTypesInFunction(FunctionRef func, const List& args) {
 	if (func->argNames.size() != args.size()) {
-		throw Exception("Malformed syntax: unexpected token");
+		throw Exception("Malformed syntax: unexpected token (ikigaiScript.cpp:2146)");
 	}
 	if (func->argTypes.empty()) {
 		// it must be last in funcs overrides
@@ -2093,7 +2155,7 @@ bool IkigaiScriptInterpreter::checkTypesInFunction(FunctionRef func, const List&
 	}
 	int i = 0;
 	for (const auto& type : func->argTypes) {
-		if (!checkConvertTypes(args[i]->typeDescriptor, type)) {
+		if (!checkConvertTypes(args[i]->typeDescriptor, type, this)) {
 			return false;
 		}
 		i++;
@@ -2275,6 +2337,43 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	case ExpressionType::DefineVar: {
 		auto def = static_cast<DefineVar*>(exp);
 		auto val = getValue(def->defineExpression, scope, classs);
+
+		// --- Tuple destructuring: var (a, b) = expr ---
+		if (!def->patternNames.empty()) {
+			if (val->getType() != Type::Tuple) {
+				throw Exception("Destructuring requires a tuple value");
+			}
+			auto& items = val->getTuple();
+			if (def->patternNames.size() != items.size()) {
+				throw Exception("Tuple size " + std::to_string(items.size()) +
+					" does not match pattern size " + std::to_string(def->patternNames.size()));
+			}
+			ValuePtr lastBound;
+			for (size_t i = 0; i < def->patternNames.size(); ++i) {
+				if (def->patternNames[i] == "_") continue;
+				auto elem = std::make_shared<Value>(*items[i]);
+				TypeDescriptor td = def->typeDescriptor;
+				if (td.type == Type::Null) {
+					td.type = elem->getType();
+					if (!td.subtype && elem->typeDescriptor.subtype) td.subtype = elem->typeDescriptor.subtype;
+					if (!td.subtype2 && elem->typeDescriptor.subtype2) td.subtype2 = elem->typeDescriptor.subtype2;
+				} else {
+					if (!def->typeDescriptor.isDynamic) {
+						if (td.type == Type::Float && elem->getType() == Type::Int) {
+							elem = std::make_shared<Value>((Float)elem->getInt());
+						} else if (!checkConvertTypes(td, elem->typeDescriptor, this)) {
+							throw TypeConvertError(td, elem->typeDescriptor);
+						}
+					}
+				}
+				td.isInit = true;
+				elem->typeDescriptor = td;
+				scope->variables[def->patternNames[i]] = elem;
+				lastBound = elem;
+			}
+			return arena.make<ValueNode>(lastBound ? lastBound : std::make_shared<Value>());
+		}
+
 		// If the declaration has an explicit static type (not Dynamic, not untyped Null-default),
 		// enforce the type constraint at definition time.
 		// Upconvert compatible literal types: Float declared var accepts Int literal.
@@ -2285,7 +2384,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			}
 		}
 		if (!def->typeDescriptor.isDynamic && def->typeDescriptor.type != Type::Null) {
-			if (!checkConvertTypes(def->typeDescriptor, val->typeDescriptor)) {
+			if (!checkConvertTypes(def->typeDescriptor, val->typeDescriptor, this)) {
 				throw TypeConvertError(def->typeDescriptor, val->typeDescriptor);
 			}
 		}
@@ -2310,6 +2409,27 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		return exp;
 	case ExpressionType::MemberVariable: {
 		auto expr = static_cast<MemberVariable*>(exp);
+		auto isSuperExpr = [](ExpressionPtr obj) {
+			if (!obj) return false;
+			if (obj->type == ExpressionType::ResolveVar) {
+				return static_cast<ResolveVar*>(obj)->name == "super";
+			}
+			if (obj->type == ExpressionType::MemberVariable) {
+				auto mv = static_cast<MemberVariable*>(obj);
+				return mv->object == nullptr && mv->name == "super";
+			}
+			return false;
+		};
+
+		bool isSuper = isSuperExpr(expr->object);
+
+		if (isSuper) {
+			if (!classs || classs->baseClasses.empty()) {
+				throw Exception("Cannot use 'super' here");
+			}
+			return arena.make<ValueNode>(resolveVariable(expr->name, classs, scope));
+		}
+
 		auto objVal = expr->object ? getValue(expr->object, scope, classs) : nullptr;
 		// Tuple element access via .0, .1, etc.
 		if (objVal && (objVal->getType() == Type::Tuple)) {
@@ -2332,6 +2452,31 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		for (auto&& sub : expr->subexpressions) {
 			args.push_back(getValue(sub, scope, classs));
 		}
+
+		auto isSuperExpr = [](ExpressionPtr obj) {
+			if (!obj) return false;
+			if (obj->type == ExpressionType::ResolveVar) {
+				return static_cast<ResolveVar*>(obj)->name == "super";
+			}
+			if (obj->type == ExpressionType::MemberVariable) {
+				auto mv = static_cast<MemberVariable*>(obj);
+				return mv->object == nullptr && mv->name == "super";
+			}
+			return false;
+		};
+
+		bool isSuper = isSuperExpr(expr->object);
+
+		if (isSuper) {
+			if (!classs || classs->baseClasses.empty()) {
+				throw Exception("Cannot use 'super' here");
+			}
+			auto& baseClassName = classs->baseClasses.front();
+			auto baseScope = resolveScope(baseClassName, globalScope);
+			auto fnc = resolveFunction(expr->functionName, baseScope);
+			return arena.make<ValueNode>(callFunction(fnc, scope, args, classs));
+		}
+
 		auto val = getValue(expr->object, scope, classs);
 		if (val->getType() != Type::Class) {
 			args.insert(args.begin(), val);
@@ -2383,7 +2528,25 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		}
 
 		if (funcExpr->function->getType() == Type::String) {
-			funcExpr->function = resolveVariable(funcExpr->function->getString(), scope);
+			if (funcExpr->function->getString() == "super") {
+				if (!classs || classs->baseClasses.empty()) {
+					throw Exception("Cannot call super constructor here");
+				}
+				auto& baseClassName = classs->baseClasses.front();
+				auto baseScope = resolveScope(baseClassName, globalScope);
+				auto baseCtor = resolveFunction(baseClassName, baseScope);
+				return arena.make<ValueNode>(callFunction(baseCtor, scope, args, namedArgs, classs));
+			}
+			funcExpr->function = resolveVariable(funcExpr->function->getString(), classs, scope);
+		}
+		if (funcExpr->function->getType() == Type::String && funcExpr->function->getString() == "super") {
+			if (!classs || classs->baseClasses.empty()) {
+				throw Exception("Cannot call super constructor here");
+			}
+			auto& baseClassName = classs->baseClasses.front();
+			auto baseScope = resolveScope(baseClassName, globalScope);
+			auto baseCtor = resolveFunction(baseClassName, baseScope);
+			return arena.make<ValueNode>(callFunction(baseCtor, scope, args, namedArgs, classs));
 		}
 		if (funcExpr->function->getType() == Type::Coro) {
 			return arena.make<ValueNode>(callCoro(funcExpr->function->getCoro()));
@@ -2646,6 +2809,61 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			items.push_back(getValue(elem, scope, classs));
 		}
 		return arena.make<ValueNode>(std::make_shared<Value>(Value::makeTuple(std::move(items))), ExpressionType::Value);
+	}
+	break;
+	case ExpressionType::DestructuringAssign:
+	{
+		auto* da = static_cast<DestructuringAssign*>(exp);
+		auto val = getValue(da->valueExpression, scope, classs);
+		if (val->getType() != Type::Tuple) {
+			throw Exception("Destructuring requires a tuple value");
+		}
+		auto& items = val->getTuple();
+		if (da->patternNames.size() != items.size()) {
+			throw Exception("Tuple size " + std::to_string(items.size()) +
+				" does not match pattern size " + std::to_string(da->patternNames.size()));
+		}
+		// Evaluate RHS fully before any assignment (already done above via getValue).
+		// Copy elements so (a,b) = (b,a) works correctly.
+		std::vector<std::shared_ptr<Value>> copies;
+		copies.reserve(items.size());
+		for (auto& item : items) copies.push_back(std::make_shared<Value>(*item));
+
+		ValuePtr lastAssigned;
+		for (size_t i = 0; i < da->patternNames.size(); ++i) {
+			if (da->patternNames[i] == "_") continue;
+			auto lhs = resolveVariable(da->patternNames[i], scope);
+			auto& rhs = copies[i];
+			if (!rhs->typeDescriptor.isInit) {
+				throw Exception("Use not init variable in expression");
+			}
+			if (lhs->typeDescriptor.isConst && lhs->typeDescriptor.isInit) {
+				throw Exception("Cannot assign to const variable '" + da->patternNames[i] + "'");
+			}
+			if (lhs->typeDescriptor.isInit && !lhs->typeDescriptor.isDynamic) {
+				bool compatible = (lhs->typeDescriptor.type == rhs->typeDescriptor.type)
+					|| (lhs->typeDescriptor.type == Type::Float && rhs->typeDescriptor.type == Type::Int)
+					|| (lhs->typeDescriptor.isNullable && rhs->typeDescriptor.type == Type::Null);
+				if (!compatible) {
+					throw TypeConvertError(lhs->typeDescriptor, rhs->typeDescriptor);
+				}
+			} else {
+				if (!checkConvertTypes(lhs->typeDescriptor, rhs->typeDescriptor, this)) {
+					throw TypeConvertError(lhs->typeDescriptor, rhs->typeDescriptor);
+				}
+			}
+			TypeDescriptor ownerTd = lhs->typeDescriptor;
+			*lhs = *rhs;
+			lhs->typeDescriptor.isDynamic = ownerTd.isDynamic;
+			lhs->typeDescriptor.isConst = ownerTd.isConst;
+			lhs->typeDescriptor.isNullable = ownerTd.isNullable;
+			lhs->typeDescriptor.isInit = true;
+			if (!ownerTd.isDynamic && ownerTd.isInit) {
+				lhs->typeDescriptor.type = ownerTd.type;
+			}
+			lastAssigned = lhs;
+		}
+		return arena.make<ValueNode>(lastAssigned ? lastAssigned : std::make_shared<Value>());
 	}
 	break;
 	case ExpressionType::Block:

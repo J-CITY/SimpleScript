@@ -27,6 +27,7 @@ namespace IkigaiScript {
         std::unordered_map<std::string, std::vector<Metadata>> membersMetadata;
 
         std::unordered_map<std::string, ScopePtr> coroScopes;
+        std::vector<std::string> baseClasses;
 
         ValuePtr& insertVar(const std::string& n, ValuePtr val);
         ScopePtr insertScope(ScopePtr val);

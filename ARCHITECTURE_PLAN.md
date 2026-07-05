@@ -44,10 +44,8 @@
 1. **Арена**: Пишем `Library/arena.h` (выделение блоками).
 2. **Обновление AST**: Меняем `std::shared_ptr<Expression>` на `Expression*` (через Arena placement new).
 3. **Visual Editor**: Адаптируем `VisualNodes.cpp`, создаем Арену внутри редактора нод.
-
 -----------------------------------
 тесты коментарии
-
 
 Что пока не Unicode-aware
 
@@ -57,22 +55,18 @@
 
 - Большинство строковых операций (find, replace, конкатенация +) — работают на уровне std::string, то есть байтов.
 
-Tuple
 
-- распаковка
+- transaction
+- модули
+- defer
+- live переменные
+- concurrency
 
-
-transaction
-
--модули
-
--- наследование
-
-defer
-
-live переменные
-
-concurrency
+Low priority
+TUPLES:
+- Типизированные паттерны
+- destructuring в параметрах функций
+- tuple-паттерны в match
 
 
 

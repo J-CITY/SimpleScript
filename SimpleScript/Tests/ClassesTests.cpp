@@ -1,4 +1,5 @@
 #include "TestHelpers.hpp"
+#include <iostream>
 
 using namespace TestHelpers;
 using namespace std::string_literals;
@@ -17,6 +18,10 @@ TEST_CASE("class: define and instantiate", "[classes.basic]") {
         }
         var p = Point(3, 4);
     )");
+  if (interp.__EXEPTION__ != IkigaiScript::ExceptionType::None) {
+    std::cout << "\n=== EXCEPTION IN TEST ===\n";
+    std::cout << "DEBUG OUT:\n" << interp.__DEBUG_OUT__ << "\n";
+  }
   REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
   REQUIRE(getVarType(interp, "p") == IkigaiScript::Type::Class);
 }
@@ -132,4 +137,140 @@ TEST_CASE("class: decorator on class scope still accessible via metadata",
   auto classMeta = interp.getMetadata(classScope);
   REQUIRE(classMeta.size() == 1);
   REQUIRE(classMeta[0].name == "editable");
+}
+
+TEST_CASE("class: basic inheritance", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            var x = 10;
+            fun getX() { return x; }
+        }
+        class Derived, Base {
+            var y = 20;
+            fun getBoth() { return getX() + y; }
+        }
+        var d = Derived();
+        var vx = d.x;
+        var vy = d.y;
+        var both = d.getBoth();
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarInt(interp, "vx") == 10);
+  REQUIRE(getVarInt(interp, "vy") == 20);
+  REQUIRE(getVarInt(interp, "both") == 30);
+}
+
+TEST_CASE("class: type compatibility with inheritance", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            fun name() { return "base"; }
+        }
+        class Derived, Base {
+            fun name() { return "derived"; }
+        }
+        var obj: Base = Derived();
+        var n = obj.name();
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarString(interp, "n") == "derived");
+}
+
+TEST_CASE("class: explicit super constructor", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            var x = 0;
+            fun Base(val) { x = val; }
+        }
+        class Derived, Base {
+            var y = 0;
+            fun Derived(v1, v2) {
+                super(v1);
+                y = v2;
+            }
+        }
+        var d = Derived(42, 100);
+        var vx = d.x;
+        var vy = d.y;
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarInt(interp, "vx") == 42);
+  REQUIRE(getVarInt(interp, "vy") == 100);
+}
+
+TEST_CASE("class: implicit super constructor", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            var x = 10;
+            fun Base() { x = 77; }
+        }
+        class Derived, Base {
+            var y = 0;
+            fun Derived(v) { y = v; }
+        }
+        var d = Derived(200);
+        var vx = d.x;
+        var vy = d.y;
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarInt(interp, "vx") == 77);
+  REQUIRE(getVarInt(interp, "vy") == 200);
+}
+
+TEST_CASE("class: method overriding & dynamic dispatch", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            fun greet() { return "hello from base"; }
+        }
+        class Derived, Base {
+            fun greet() { return "hello from derived"; }
+        }
+        var b = Base();
+        var d = Derived();
+        var r1 = b.greet();
+        var r2 = d.greet();
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarString(interp, "r1") == "hello from base");
+  REQUIRE(getVarString(interp, "r2") == "hello from derived");
+}
+
+TEST_CASE("class: super method call", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            var msg = "base";
+            fun greet() { return msg; }
+        }
+        class Derived, Base {
+            fun greet() { return super.greet() + " & derived"; }
+        }
+        var d = Derived();
+        var r = d.greet();
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarString(interp, "r") == "base & derived");
+}
+
+TEST_CASE("class: default constructor generation for subclass", "[classes.inheritance]") {
+  auto interp = makeInterp();
+  interp.evaluate(R"(
+        class Base {
+            var x = 100;
+            fun Base() { x = 999; }
+        }
+        class Derived, Base {
+            var y = 200;
+        }
+        var d = Derived();
+        var vx = d.x;
+        var vy = d.y;
+    )");
+  REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+  REQUIRE(getVarInt(interp, "vx") == 999);
+  REQUIRE(getVarInt(interp, "vy") == 200);
 }

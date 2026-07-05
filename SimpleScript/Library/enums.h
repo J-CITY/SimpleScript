@@ -98,7 +98,8 @@ namespace IkigaiScript
 		Block,
 		NamedArgument,
 		Match,
-		TupleLiteral
+		TupleLiteral,
+		DestructuringAssign
 	};
 
 	enum class ParseState : uint8_t {

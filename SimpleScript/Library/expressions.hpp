@@ -347,6 +347,7 @@ namespace IkigaiScript {
 
 	struct DefineVar : public Expression {
 		std::string name;
+		std::vector<std::string> patternNames; // non-empty → tuple destructuring pattern
 		ExpressionPtr defineExpression = nullptr;
 		TypeDescriptor typeDescriptor;
 
@@ -355,6 +356,8 @@ namespace IkigaiScript {
 			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr) {}
 		DefineVar(const std::string& n, ExpressionPtr defExpr, const TypeDescriptor& td, ExpressionPtr par = nullptr) :
 			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr), typeDescriptor(td) {}
+		DefineVar(std::vector<std::string> names, ExpressionPtr defExpr, const TypeDescriptor& td, ExpressionPtr par = nullptr) :
+			Expression(ExpressionType::DefineVar, par), patternNames(std::move(names)), defineExpression(defExpr), typeDescriptor(td) {}
 	};
 
 	struct NamedArgumentExpression : public Expression {
@@ -698,5 +701,15 @@ namespace IkigaiScript {
 		std::vector<ExpressionPtr> elements;
 
 		TupleLiteralExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::TupleLiteral, par) {}
+	};
+
+	// --- Tuple destructuring reassignment: (a, b) = expr ---
+
+	struct DestructuringAssign : public Expression {
+		std::vector<std::string> patternNames;
+		ExpressionPtr valueExpression;
+
+		DestructuringAssign(std::vector<std::string> names, ExpressionPtr valExpr, ExpressionPtr par = nullptr)
+			: Expression(ExpressionType::DestructuringAssign, par), patternNames(std::move(names)), valueExpression(valExpr) {}
 	};
 }

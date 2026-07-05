@@ -274,6 +274,7 @@ namespace IkigaiScript {
         std::unordered_map<std::string, ValuePtr> variables;
         ScopePtr functionScope;
         std::mutex varInsert;
+        std::vector<std::string> baseClasses;
 
         Class(const std::string& name_) : name(name_) {}
         Class(const std::string& name_, const std::unordered_map<std::string, ValuePtr>& variables_) : name(name_), variables(variables_)

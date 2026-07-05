@@ -262,6 +262,37 @@ var r = match (n) { case 1 => { 100; } default => { 0; } };  // expression form
 
 **`Value::makeTuple`:** Static factory — creates Value with `Type::Tuple` and places items in `asList`. Use `getTuple()` to access the list.
 
+**`for` over tuple:** `for (x : t)` iterates each element in order; `for (idx, x : t)` gives index + element — same as List. No multi-bind unpack in `for`.
+
+### Tuple Destructuring
+
+**Phase 1 — declaration with pattern:**
+```simplescript
+var (a, b) = (1, 2);
+const (x, y) = (1, 2);
+dynamic (p, q) = (1, "hi");
+var (first, _) = (42, "skip");   // _ skips a slot
+```
+- `DefineVar::patternNames` (non-empty vector) drives this path in `consolidated()`.
+- Each bound variable gets its `TypeDescriptor` inferred from the corresponding tuple element (same rules as plain `var`). `isConst`/`isDynamic` from the declaration apply to all variables.
+- `_` slots are silently skipped — no variable is created.
+- Errors: non-tuple RHS, size mismatch, duplicate names → runtime exception.
+- Parser: `ParseState::DefineVar/DefineConst/DefineDynamic` — when `parseStrings[0] == "("`, scans the pattern before `=`.
+
+**Phase 2 — reassignment:**
+```simplescript
+var a = 0; var b = 0;
+(a, b) = (1, 2);       // assign into existing vars
+(a, b) = (b, a);       // swap: RHS fully evaluated before any binding
+(a, _) = (99, 0);     // _ skips a slot
+```
+- `DestructuringAssign { patternNames, valueExpression }` AST node (`ExpressionType::DestructuringAssign`).
+- Variables must already exist in scope. Type-check and owner-flag rules mirror the `=` operator.
+- `isConst` variables throw on reassign. Static-typed vars throw `TypeConvertError` on type mismatch.
+- Parser: `ReadLine` / `}` implicit-semicolon path — checks `line[0] == "("` followed by pattern + `=` before falling through to `getExpression`.
+
+**Wildcard `_`:** reuses the existing `_` keyword. In destructuring contexts it means "ignore this element" — no variable is bound.
+
 ---
 
 ## 14. Unicode

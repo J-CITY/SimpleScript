@@ -6,13 +6,14 @@
 #include "utf8Utils.hpp"
 #include <fstream>
 #include <iostream>
+#include <set>
 
 namespace IkigaiScript {
 
 bool isContainer(Type type);
 bool checkNext(const std::vector<std::string_view>& vec, std::string_view expect);
 bool expectNext(std::vector<std::string_view>& vec, std::string_view expect);
-bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2);
+bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2, IkigaiScriptInterpreter* interpreter);
 bool isStringLiteral(std::string_view token);
 bool isCharLiteral(std::string_view token);
 bool isFloatLiteral(std::string_view token);
@@ -882,6 +883,8 @@ void Parser::parseType(TypeDescriptor& td) {
 	auto desc = interpreter->checkTypeInScope(typeName, parseScope);
 	td.isDynamic = false;
 	td.type = desc.type;
+	td.subtype = desc.subtype;
+	td.subtype2 = desc.subtype2;
 	
 	if (isContainer(td.type)) {
 		parseContainerSubtype(td);
@@ -1041,6 +1044,22 @@ void Parser::parse(std::string_view token) {
 		else if (token == "}") {
 			closedExpr = closeCurrentExpression();
 			if (!closedExpr || parseScope->name == "__anon") {
+				if (parseScope->isClassScope) {
+					std::string className = parseScope->name;
+					if (!parseScope->parent->functions.contains(className)) {
+						std::vector<std::string> argNames;
+						std::map<std::string, TypeDescriptor> argTypes;
+						std::map<std::string, ExpressionPtr> defValues;
+						std::vector<ExpressionPtr> bodyExprs;
+						if (!parseScope->baseClasses.empty()) {
+							auto superVar = interpreter->resolveVariable("super", parseScope);
+							auto superCall = interpreter->arena.make<FunctionExpression>(superVar);
+							bodyExprs.push_back(superCall);
+						}
+						auto defaultCtor = std::make_shared<Function>(className, argNames, argTypes, defValues, bodyExprs);
+						interpreter->newConstructor(className, parseScope->parent, defaultCtor);
+					}
+				}
 				interpreter->closeScope(parseScope);
 			}
 			if (previousExpression && previousExpression->type != ExpressionType::IfElse
@@ -1231,11 +1250,47 @@ void Parser::parse(std::string_view token) {
 				if (!parseStrings.empty()) {
 					auto line = move(parseStrings);
 					clearParseStacks();
-					if (!currentExpression) {
-						interpreter->getValue(line, parseScope, nullptr);
+					bool handledAsDestruct = false;
+					// Check for destructuring assignment: (a, b, _) = expr
+					if (!line.empty() && line[0] == "(") {
+						size_t closeIdx = 0;
+						int depth = 1;
+						for (size_t di = 1; di < line.size(); ++di) {
+							if (line[di] == "(" || line[di] == "[") ++depth;
+							else if (line[di] == ")" || line[di] == "]") {
+								if (--depth == 0) { closeIdx = di; break; }
+							}
+						}
+						if (depth == 0 && closeIdx + 1 < line.size() && line[closeIdx + 1] == "=") {
+							std::vector<std::string> patNames;
+							for (size_t di = 1; di < closeIdx; ++di) {
+								if (line[di] != ",") patNames.push_back(std::string(line[di]));
+							}
+							{
+								std::set<std::string> seen;
+								for (auto& n : patNames) {
+									if (n == "_") continue;
+									if (!seen.insert(n).second) throw Exception("Duplicate name '" + n + "' in destructuring pattern");
+								}
+							}
+							std::vector<std::string_view> rhs(line.begin() + closeIdx + 2, line.end());
+							ExpressionPtr valExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
+							auto astNode = interpreter->arena.make<DestructuringAssign>(std::move(patNames), valExpr);
+							if (!currentExpression) {
+								interpreter->getValue(astNode, parseScope, nullptr);
+							} else {
+								currentExpression->push_back(astNode);
+							}
+							handledAsDestruct = true;
+						}
 					}
-					else {
-						currentExpression->push_back(getExpression(line, parseScope, nullptr));
+					if (!handledAsDestruct) {
+						if (!currentExpression) {
+							interpreter->getValue(line, parseScope, nullptr);
+						}
+						else {
+							currentExpression->push_back(getExpression(line, parseScope, nullptr));
+						}
 					}
 				}
 				else {
@@ -1286,6 +1341,47 @@ void Parser::parse(std::string_view token) {
 			auto line = move(parseStrings);
 			clearParseStacks();
 			// we clear before evaluating lines so any exceptions can clear the offending code
+
+			// Check for destructuring assignment: (a, b, _) = expr
+			{
+				bool isDestruct = false;
+				size_t closeIdx = 0;
+				if (!line.empty() && line[0] == "(") {
+					int depth = 1;
+					for (size_t di = 1; di < line.size(); ++di) {
+						if (line[di] == "(" || line[di] == "[") ++depth;
+						else if (line[di] == ")" || line[di] == "]") {
+							if (--depth == 0) { closeIdx = di; break; }
+						}
+					}
+					if (depth == 0 && closeIdx + 1 < line.size() && line[closeIdx + 1] == "=") {
+						isDestruct = true;
+					}
+				}
+				if (isDestruct) {
+					std::vector<std::string> patNames;
+					for (size_t di = 1; di < closeIdx; ++di) {
+						if (line[di] != ",") patNames.push_back(std::string(line[di]));
+					}
+					{
+						std::set<std::string> seen;
+						for (auto& n : patNames) {
+							if (n == "_") continue;
+							if (!seen.insert(n).second) throw Exception("Duplicate name '" + n + "' in destructuring pattern");
+						}
+					}
+					std::vector<std::string_view> rhs(line.begin() + closeIdx + 2, line.end());
+					ExpressionPtr valExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
+					auto astNode = interpreter->arena.make<DestructuringAssign>(std::move(patNames), valExpr);
+					if (!currentExpression) {
+						interpreter->getValue(astNode, parseScope, nullptr);
+					} else {
+						currentExpression->push_back(astNode);
+					}
+					break;
+				}
+			}
+
 			if (!currentExpression) {
 				interpreter->getValue(line, parseScope, nullptr);
 			}
@@ -1475,6 +1571,46 @@ void Parser::parse(std::string_view token) {
 			tDescriptor.isConst = parseState == ParseState::DefineConst;
 			tDescriptor.isDynamic = parseState == ParseState::DefineDynamic;
 
+			// --- Tuple destructuring pattern: var (a, b, _) = expr ---
+			if (parseStrings[0] == "(") {
+				std::vector<std::string> patNames;
+				size_t pi = 1;
+				while (pi < parseStrings.size() && parseStrings[pi] != ")") {
+					if (parseStrings[pi] != ",") {
+						patNames.push_back(std::string(parseStrings[pi]));
+					}
+					++pi;
+				}
+				if (pi >= parseStrings.size()) {
+					throw Exception("Malformed destructuring pattern: missing ')'");
+				}
+				++pi; // skip ')'
+				// Validate: no duplicates (ignore '_')
+				{
+					std::set<std::string> seen;
+					for (auto& n : patNames) {
+						if (n == "_") continue;
+						if (!seen.insert(n).second) {
+							throw Exception("Duplicate name '" + n + "' in destructuring pattern");
+						}
+					}
+				}
+				if (pi >= parseStrings.size() || parseStrings[pi] != "=") {
+					throw Exception("Expected '=' after destructuring pattern");
+				}
+				++pi; // skip '='
+				std::vector<std::string_view> rhs(parseStrings.begin() + pi, parseStrings.end());
+				ExpressionPtr defineExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
+				auto astNode = interpreter->arena.make<DefineVar>(std::move(patNames), defineExpr, tDescriptor);
+				if (currentExpression) {
+					currentExpression->push_back(astNode);
+				} else {
+					interpreter->getValue(astNode, parseScope, nullptr);
+				}
+				clearParseStacks();
+				break;
+			}
+
 			auto name = parseStrings.front();
 			ExpressionPtr defineExpr = nullptr;
 			if (parseStrings.size() > 2) {
@@ -1487,6 +1623,8 @@ void Parser::parse(std::string_view token) {
 						tDescriptor.isDynamic = true;
 					} else {
 						tDescriptor.type = typeDesc.type;
+						tDescriptor.subtype = typeDesc.subtype;
+						tDescriptor.subtype2 = typeDesc.subtype2;
 						tDescriptor.isDynamic = false;
 					}
 					parseStrings.erase(parseStrings.begin()); // type
@@ -1534,7 +1672,10 @@ void Parser::parse(std::string_view token) {
 	case ParseState::ClassArgs:
 		if (token == ",") {
 			if (parseStrings.size()) {
-				auto otherscope = interpreter->resolveScope(std::string(parseStrings.back()), parseScope);
+				auto baseName = std::string(parseStrings.back());
+				auto otherscope = interpreter->resolveScope(baseName, parseScope);
+				parseScope->baseClasses.push_back(baseName);
+				parseScope->baseClasses.insert(parseScope->baseClasses.end(), otherscope->baseClasses.begin(), otherscope->baseClasses.end());
 				parseScope->variables.insert(otherscope->variables.begin(), otherscope->variables.end());
 				parseScope->functions.insert(otherscope->functions.begin(), otherscope->functions.end());
 				parseStrings.clear();
@@ -1542,7 +1683,10 @@ void Parser::parse(std::string_view token) {
 		}
 		else if (token == "{") {
 			if (parseStrings.size()) {
-				auto otherscope = interpreter->resolveScope(std::string(parseStrings.back()), parseScope);
+				auto baseName = std::string(parseStrings.back());
+				auto otherscope = interpreter->resolveScope(baseName, parseScope);
+				parseScope->baseClasses.push_back(baseName);
+				parseScope->baseClasses.insert(parseScope->baseClasses.end(), otherscope->baseClasses.begin(), otherscope->baseClasses.end());
 				parseScope->variables.insert(otherscope->variables.begin(), otherscope->variables.end());
 				parseScope->functions.insert(otherscope->functions.begin(), otherscope->functions.end());
 			}
@@ -1866,24 +2010,19 @@ bool Parser::readLine(std::string_view text) {
 	}
 	catch (Exception e) {
 		interpreter->__EXEPTION__ = e.type;
-#if defined SCRIPT_DO_INTERNAL_PRINT
-		interpreter->callFunctionWithArgs(interpreter->resolveFunction("print"), "Error at line "s + std::to_string(IkigaiScriptInterpreter::currentLine) + ", at: " + std::to_string(tokenCount) + string(tokens[tokenCount]) + ": " + e.errStr + "\n");
-#else 
-		//printf("Error at line %llu at %i: %s : %s\n", IkigaiScriptInterpreter::currentLine, tokenCount, std::string(tokens[tokenCount]).c_str(), e.errStr.c_str());
-#endif		
-
+		std::string tokenList;
+		for (size_t i = 0; i < tokens.size(); i++) {
+			if (i == tokenCount) tokenList += " >>>" + std::string(tokens[i]) + "<<< ";
+			else tokenList += std::string(tokens[i]) + " ";
+		}
+		std::cout << "PARSER EXCEPTION CAUGHT: " << e.errStr << "\nCONTEXT: " << tokenList << "\n";
 		clearParseStacks();
 		parseScope = interpreter->globalScope;
 		currentExpression = nullptr;
 		didExcept = true;
-
 	}
 	catch (std::exception& e) {
-#if defined SCRIPT_DO_INTERNAL_PRINT
-		interpreter->callFunctionWithArgs(interpreter->resolveFunction("print"), "Error at line "s + std::to_string(IkigaiScriptInterpreter::currentLine) + ", at: " + std::to_string(tokenCount) + string(tokens[tokenCount]) + ": " + e.what() + "\n");
-#else
-		//printf("Error at line %llu at %i: %s : %s\n", IkigaiScriptInterpreter::currentLine, tokenCount, std::string(tokens[tokenCount]).c_str(), e.what());
-#endif		
+		std::cout << "STD EXCEPTION CAUGHT: " << e.what() << " at line " << IkigaiScriptInterpreter::currentLine << "\n";
 		clearParseStacks();
 		parseScope = interpreter->globalScope;
 		currentExpression = nullptr;
