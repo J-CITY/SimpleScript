@@ -73,7 +73,8 @@ namespace IkigaiScript
 		Generic,
 		Range,
 		Tuple,
-		Optional
+		Optional,
+		Result
 	};
 
 	enum class LoopInterupt {

@@ -63,6 +63,8 @@ namespace IkigaiScript {
 			return "tuple";
 		case Type::Optional:
 			return "Optional";
+		case Type::Result:
+			return "Result";
 		default:
 			return "unknown";
 		}
@@ -74,6 +76,12 @@ namespace IkigaiScript {
 
 	struct Value;
 	using ValuePtr = std::shared_ptr<Value>;
+
+	struct ResultData {
+		bool isOk = true;
+		ValuePtr value;
+	};
+	using ResultDataPtr = std::shared_ptr<ResultData>;
 
 	using List = std::vector<ValuePtr>;
 	

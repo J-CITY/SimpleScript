@@ -27,6 +27,7 @@ namespace IkigaiScript {
             ClassRef asClass;
             RangeValue asRange;
             ValuePtr asOptional;
+            ResultDataPtr asResult;
 
             Payload() {}
             ~Payload() {}
@@ -44,6 +45,7 @@ namespace IkigaiScript {
             case Type::Map: value.asDictionary.~shared_ptr(); break;
             case Type::Class: value.asClass.~shared_ptr(); break;
             case Type::Optional: value.asOptional.~shared_ptr(); break;
+            case Type::Result: value.asResult.~shared_ptr(); break;
             default: break;
             }
         }
@@ -68,6 +70,7 @@ namespace IkigaiScript {
             case Type::Tuple: new (&value.asList) List(o.value.asList); break;
             case Type::Range: new (&value.asRange) RangeValue(o.value.asRange); break;
             case Type::Optional: new (&value.asOptional) ValuePtr(o.value.asOptional); break;
+            case Type::Result: new (&value.asResult) ResultDataPtr(o.value.asResult); break;
             default: break;
             }
         }
@@ -92,6 +95,7 @@ namespace IkigaiScript {
             case Type::Tuple: new (&value.asList) List(std::move(o.value.asList)); break;
             case Type::Range: new (&value.asRange) RangeValue(std::move(o.value.asRange)); break;
             case Type::Optional: new (&value.asOptional) ValuePtr(std::move(o.value.asOptional)); break;
+            case Type::Result: new (&value.asResult) ResultDataPtr(std::move(o.value.asResult)); break;
             default: break;
             }
         }
@@ -141,6 +145,67 @@ namespace IkigaiScript {
         ValuePtr getOptional() const {
             if (getType() != Type::Optional) throw Exception("Value is not an Optional");
             return value.asOptional;
+        }
+
+        static Value makeResultOk(ValuePtr val, std::shared_ptr<TypeDescriptor> okType = nullptr, std::shared_ptr<TypeDescriptor> errType = nullptr) {
+            Value v;
+            v.destroy();
+            v.typeDescriptor = TypeDescriptor{ Type::Result, true, false, true, false };
+            if (okType) {
+                v.typeDescriptor.subtype = okType;
+            } else if (val) {
+                v.typeDescriptor.subtype = std::make_shared<TypeDescriptor>(val->typeDescriptor);
+            } else {
+                v.typeDescriptor.subtype = std::make_shared<TypeDescriptor>(TypeDescriptor{ Type::Null, true, true, true, false });
+            }
+            if (errType) {
+                v.typeDescriptor.subtype2 = errType;
+            } else {
+                v.typeDescriptor.subtype2 = std::make_shared<TypeDescriptor>(TypeDescriptor{ Type::Null, true, true, false, true }); // default: Dynamic
+            }
+            auto data = std::make_shared<ResultData>();
+            data->isOk = true;
+            data->value = val ? val : std::make_shared<Value>();
+            new (&v.value.asResult) ResultDataPtr(data);
+            return v;
+        }
+
+        static Value makeResultErr(ValuePtr err, std::shared_ptr<TypeDescriptor> okType = nullptr, std::shared_ptr<TypeDescriptor> errType = nullptr) {
+            Value v;
+            v.destroy();
+            v.typeDescriptor = TypeDescriptor{ Type::Result, true, false, true, false };
+            if (okType) {
+                v.typeDescriptor.subtype = okType;
+            } else {
+                v.typeDescriptor.subtype = std::make_shared<TypeDescriptor>(TypeDescriptor{ Type::Null, true, true, false, true }); // default: Dynamic
+            }
+            if (errType) {
+                v.typeDescriptor.subtype2 = errType;
+            } else if (err) {
+                v.typeDescriptor.subtype2 = std::make_shared<TypeDescriptor>(err->typeDescriptor);
+            } else {
+                v.typeDescriptor.subtype2 = std::make_shared<TypeDescriptor>(TypeDescriptor{ Type::Null, true, true, true, false });
+            }
+            auto data = std::make_shared<ResultData>();
+            data->isOk = false;
+            data->value = err ? err : std::make_shared<Value>();
+            new (&v.value.asResult) ResultDataPtr(data);
+            return v;
+        }
+
+        const ResultData& getResult() const {
+            if (getType() != Type::Result) throw Exception("Value is not a Result");
+            return *value.asResult;
+        }
+
+        bool resultIsOk() const {
+            if (getType() != Type::Result) throw Exception("Value is not a Result");
+            return value.asResult->isOk;
+        }
+
+        ValuePtr resultPayload() const {
+            if (getType() != Type::Result) throw Exception("Value is not a Result");
+            return value.asResult->value;
         }
 
         Value(const Value& o) { copyFrom(o); }

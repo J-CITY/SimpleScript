@@ -23,7 +23,7 @@ using namespace IkigaiScript;
 namespace IkigaiScript {
 
 bool isContainer(Type type) {
-	const static std::set<Type> containers = { Type::Array, Type::List, Type::Set, Type::Map };
+	const static std::set<Type> containers = { Type::Array, Type::List, Type::Set, Type::Map, Type::Result };
 	return containers.contains(type);
 };
 
@@ -42,7 +42,7 @@ bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
 }
 
 bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2, IkigaiScriptInterpreter* interpreter) {
-	if (t1.isDynamic) {
+	if (t1.isDynamic || t2.isDynamic) {
 		return true;
 	}
 
@@ -92,7 +92,7 @@ bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2, Ikiga
 			return true;
 		}
 		bool b = true;
-		if (t1.type == Type::Map) {
+		if (t1.type == Type::Map || t1.type == Type::Result) {
 			if (!t1.subtype2.has_value() || !t2.subtype2.has_value()) {
 				return false;
 			}
@@ -527,7 +527,7 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			// Only Float←Int upcast is allowed. Bool←Int coercion disallowed for assignment.
 			if (args[0]->typeDescriptor.isInit && !args[0]->typeDescriptor.isDynamic) {
 				bool compatible = false;
-				if (args[0]->typeDescriptor.type == Type::Class) {
+				if (args[0]->typeDescriptor.type == Type::Class || isContainer(args[0]->typeDescriptor.type)) {
 					compatible = checkConvertTypes(args[0]->typeDescriptor, args[1]->typeDescriptor, this);
 				} else {
 					compatible = (args[0]->typeDescriptor.type == args[1]->typeDescriptor.type)
@@ -551,6 +551,8 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			args[0]->typeDescriptor.isInit = true;
 			if (!ownerTd.isDynamic && ownerTd.isInit) {
 				args[0]->typeDescriptor.type = ownerTd.type;
+				args[0]->typeDescriptor.subtype = ownerTd.subtype;
+				args[0]->typeDescriptor.subtype2 = ownerTd.subtype2;
 			}
 			return args[0];
 		}},
@@ -1264,6 +1266,47 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 
 						{"optionalEmpty", [](const List& args) {
 							return std::make_shared<Value>(Value::makeOptional(nullptr));
+							}},
+
+						{"resultOk", [](const List& args) {
+							if (args.empty()) {
+								return std::make_shared<Value>(Value::makeResultOk(std::make_shared<Value>()));
+							}
+							return std::make_shared<Value>(Value::makeResultOk(args[0]));
+							}},
+
+						{"resultErr", [](const List& args) {
+							if (args.empty()) {
+								return std::make_shared<Value>(Value::makeResultErr(std::make_shared<Value>()));
+							}
+							return std::make_shared<Value>(Value::makeResultErr(args[0]));
+							}},
+
+						{"resultIsOk", [](const List& args) {
+							if (args.empty() || args[0]->getType() != Type::Result) {
+								return std::make_shared<Value>(false);
+							}
+							return std::make_shared<Value>(args[0]->resultIsOk());
+							}},
+
+						{"resultGet", [](const List& args) {
+							if (args.empty() || args[0]->getType() != Type::Result) {
+								throw Exception("resultGet expected a Result value");
+							}
+							if (!args[0]->resultIsOk()) {
+								throw Exception("Attempt to get Ok value from Err Result: " + args[0]->resultPayload()->getPrintString());
+							}
+							return args[0]->resultPayload();
+							}},
+
+						{"resultGetErr", [](const List& args) {
+							if (args.empty() || args[0]->getType() != Type::Result) {
+								throw Exception("resultGetErr expected a Result value");
+							}
+							if (args[0]->resultIsOk()) {
+								throw Exception("Attempt to get Err value from Ok Result: " + args[0]->resultPayload()->getPrintString());
+							}
+							return args[0]->resultPayload();
 							}},
 
 						{"getline", [](const List& args) {
@@ -2643,6 +2686,12 @@ TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name
 	}
 	else if (name == "Tuple") {
 		desc.type = Type::Tuple; return desc;
+	}
+	else if (name == "Optional") {
+		desc.type = Type::Optional; return desc;
+	}
+	else if (name == "Result") {
+		desc.type = Type::Result; return desc;
 	}
 	else {
 		desc.type = Type::Class;

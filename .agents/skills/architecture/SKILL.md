@@ -409,4 +409,42 @@ SimpleScript implements scope-based deferred execution using the `defer` keyword
 4. **`executeDeferBody`**: Resolves the defer body expressions and validates that they did not trigger any control flow interrupt (`explicitReturn` or `interrupt` in the `BlockResult` returned by `needsToReturn`).
 5. **Return Safety**: The return value of a function is copied (`std::make_shared<Value>(*returnVal)`) before `closeScope` runs, guaranteeing that deferred actions modifying local variables do not affect the already calculated return value of the function.
 
+---
 
+## 20. SafeBlocks and Transactions (`>>> { }`)
+
+SimpleScript supports atomic transaction blocks via safe blocks.
+
+### Syntax & Semantics
+- **`>>>{ statements; }`**: Defines a transaction block.
+- **Atomicity**: Changes to existing outer variables inside the block are captured using a **Copy-on-Write (COW)** overlay scope.
+- **Commit & Rollback**:
+  - If the block executes successfully (no exceptions are thrown), changes are committed (propagated to outer variables via `commitTransaction`) and defers registered inside the transaction scope are executed.
+  - If any exception is thrown, changes are discarded via `rollbackTransaction` and defers registered inside the transaction scope are ignored.
+- **Evaluation Values**:
+  - If the block contains a `return <expr>` or produces a value from its last statement, it yields a `Type::Optional` (either `some(val)` upon success or `empty` upon failure).
+  - If the block does not produce a value, it yields a `Type::Bool` (`true` upon success or `false` upon failure).
+
+### Technical Architecture
+1. **Overlay Scope**: Evaluated in a dedicated scope where `isTransactionScope = true`.
+2. **COW Resolving**: Writing to a variable (LHS of `=`) via `resolveVariableForWrite` checks up the scope chain. If a transaction scope is crossed before finding the declaration, it copies the value using COW (`std::make_shared<Value>(*original_val)`) and registers the copy in the transaction scope.
+3. **Assignment Handling**: The parser catches the LHS `ResolveVar` inside expressions being assigned to, enforcing write resolution.
+
+---
+
+## 21. Result Type (`Result<T, E>`)
+
+SimpleScript implements a native `Result<T, E>` type representing either a successful computation `Ok(T)` or an error `Err(E)`.
+
+### Syntax & Type Annotations
+- **Type Syntax**: `Result<T, E>` where `T` is the success type and `E` is the error type.
+- **Optional/Nullable Syntax**: `Result<T, E>?` represents a nullable Result.
+- **Container Checks**: `Result` is registered as a container type, enabling recursive static type parameter checks (e.g. `Result<Int, String>` is incompatible with `Result<String, String>`). `Dynamic` is compatible with any type parameter.
+
+### Stdlib API & Usage
+- **`resultOk(val)`**: Constructs an `Ok` result (`Value::makeResultOk(val)`). If no explicit type parameters are provided, it infers the success type `T` from `val` and defaults the error type `E` to `Dynamic`.
+- **`resultErr(err)`**: Constructs an `Err` result (`Value::makeResultErr(err)`). Infers `E` from `err` and defaults `T` to `Dynamic`.
+- **`resultIsOk(r)`**: Returns a `Bool` indicating if `r` is an `Ok` variant.
+- **`resultGet(r)`**: Unwraps the `Ok` value of `r`. Throws a runtime `Exception` if `r` is `Err`.
+- **`resultGetErr(r)`**: Unwraps the `Err` value of `r`. Throws a runtime `Exception` if `r` is `Ok`.
+- **Print Formatting**: Prints as `ok(value)` or `err(value)`.

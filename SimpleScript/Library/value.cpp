@@ -117,6 +117,15 @@ namespace IkigaiScript {
                     }
                     break;
                 }
+                case Type::Result:
+                {
+                    if (value.asResult->isOk) {
+                        *this = Value("ok(" + value.asResult->value->getPrintString() + ")");
+                    } else {
+                        *this = Value("err(" + value.asResult->value->getPrintString() + ")");
+                    }
+                    break;
+                }
                 }
                 break;
             case Type::Array:
@@ -409,6 +418,15 @@ namespace IkigaiScript {
                         *this = Value("some(" + value.asOptional->getPrintString() + ")");
                     } else {
                         *this = Value("empty");
+                    }
+                    break;
+                }
+                case Type::Result:
+                {
+                    if (value.asResult->isOk) {
+                        *this = Value("ok(" + value.asResult->value->getPrintString() + ")");
+                    } else {
+                        *this = Value("err(" + value.asResult->value->getPrintString() + ")");
                     }
                     break;
                 }

@@ -925,7 +925,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 }
 
 bool isContainer(std::string_view type) {
-	const static std::set<std::string> containers = { "Array", "List", "Map", "Set" };
+	const static std::set<std::string> containers = { "Array", "List", "Map", "Set", "Result", "Optional" };
 	return containers.contains(std::string(type));
 }
 
@@ -935,6 +935,7 @@ void Parser::parseType(TypeDescriptor& td) {
 	td.isNullable = false;
 	if (checkNext(parseStrings, "?")) {
 		td.isNullable = true;
+		parseStrings.erase(parseStrings.begin());
 	}
 
 	auto desc = interpreter->checkTypeInScope(typeName, parseScope);
@@ -952,17 +953,14 @@ void Parser::parseContainerSubtype(TypeDescriptor& td) {
 	if (!checkNext(parseStrings, "<")) {
 		return;
 	}
+	expectNext(parseStrings, "<");
 
 	auto subTypeDescriptor = std::make_shared<TypeDescriptor>();
 	td.subtype = subTypeDescriptor;
 
-	auto _subtypeName = std::string(parseStrings.front());
-	subTypeDescriptor->type = interpreter->checkTypeInScope(_subtypeName, parseScope).type;
-	parseStrings.erase(parseStrings.begin()); // subtype
-	
 	parseType(*subTypeDescriptor);
 	
-	if (td.type == Type::Map) {
+	if (td.type == Type::Map || td.type == Type::Result) {
 		expectNext(parseStrings, ",");
 		td.subtype2 = std::make_shared<TypeDescriptor>();
 		parseType(*td.subtype2.value());
@@ -971,6 +969,7 @@ void Parser::parseContainerSubtype(TypeDescriptor& td) {
 	td.isNullable = false;
 	if (checkNext(parseStrings, "?")) {
 		td.isNullable = true;
+		parseStrings.erase(parseStrings.begin());
 	}
 }
 
