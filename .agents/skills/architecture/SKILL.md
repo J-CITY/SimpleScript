@@ -297,19 +297,48 @@ var a = 0; var b = 0;
 
 ## 14. Unicode
 
-**`utf8Utils.hpp`:** Provides `decodeCodePoint`, `encodeCodePoint`, `utf8Length`, `utf8At`, `utf8Slice`.
+**`utf8Utils.hpp`:** Core utilities — all inline, no dependencies.
 
-**Char literals:** Parser now uses `decodeCharLiteral(val)` (from `utf8Utils.hpp`) instead of `val[0]`, correctly decoding multi-byte UTF-8 and `\u{XXXX}` escapes.
+| Function | Purpose |
+|----------|---------|
+| `utf8DecodeOne(s, pos)` | Decode one code point, advance `pos` |
+| `utf8Encode(cp, result)` | Encode code point to UTF-8 |
+| `utf8Length(s)` | Count code points (not bytes) |
+| `utf8At(s, n)` | `n`-th code point |
+| `utf8Slice(s, start, end)` | Substring by code point indices `[start, end]` inclusive |
+| `utf8Substr(s, start, count)` | Substring from code point `start`, `count` code points |
+| `utf8Reverse(s)` | Reverse by code points |
+| `utf8SplitCodePoints(s)` | Split into `vector<string>`, one code point each |
+| `utf8Find(haystack, needle, startCp)` | First occurrence as **code point index**, or -1 |
 
-**`getPrintString()`:** Chars are UTF-8 encoded (not `?` for non-ASCII). `string` passthrough. Ranges/tuples have dedicated formats.
+### String operation semantics
 
-**`length(s)`:** Returns Unicode code point count via `utf8Length`, not byte count.
+| Operation | Index unit | Notes |
+|-----------|-----------|-------|
+| `length(s)` | code points | `utf8Length` |
+| `s[i]` → `Char` | code points | `utf8At` |
+| `s[a..b]` / `s[a..=b]` | code points | `utf8Slice` — matches List/Array slice semantics |
+| `range(str, start, count)` | code points | `utf8Substr`; `count` is number of code points, not bytes |
+| `reverse(s)` | code points | `utf8Reverse` |
+| `split(s)` without delim | code points | `utf8SplitCodePoints` |
+| `split(s, delim)` with delim | bytes | `std::string` split; correct for ASCII/valid UTF-8 delimiters |
+| `find(s, needle)` → Int or null | code points | `utf8Find`; also accepts optional 3rd arg `startCp` |
+| `replace(s, from, to)` | bytes | `std::string::find/replace`; correct for valid UTF-8 substrings |
+| `startswith(s, p)` / `endswith(s, p)` | bytes | correct for valid UTF-8 |
+| `String + String`, `+=` | bytes | UTF-8 concatenation is byte-correct |
+| `Char + String` | — | Non-ASCII `Char` correctly encoded via `utf8Encode` |
 
-**`s[i]`:** Returns `Char` at code point index `i` via `utf8At` (string indexing in `listindex`).
+**Char literals:** Parser uses `decodeCharLiteral(val)` (from `utf8Utils.hpp`) instead of `val[0]`, correctly decoding multi-byte UTF-8 and `\u{XXXX}` escapes.
+
+**`getPrintString()`:** Chars are UTF-8 encoded via `utf8Encode`. String passthrough. Ranges/tuples have dedicated formats.
+
+**Char→String conversion:** `upconvert`/`hardconvert`/`operator+` all use `utf8Encode` — non-ASCII chars no longer produce `?`.
 
 **Escape sequences:** `replaceWhitespaceLiterals` handles `\\`, `\"`, `\'`, `\n`, `\r`, `\t`, `\u{XXXX}`.
 
 **`Char` type annotation:** `checkTypeInScope("Char") → Type::Char`.
+
+**Out of scope:** grapheme clusters, Unicode normalization, locale-aware collation.
 
 ---
 

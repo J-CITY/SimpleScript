@@ -1,5 +1,5 @@
 #include "value.hpp"
-
+#include "utf8Utils.hpp"
 #include "exception.h"
 
 namespace IkigaiScript {
@@ -82,8 +82,7 @@ namespace IkigaiScript {
                 case Type::Char:
                 {
                     std::string s;
-                    if (getChar() <= 0x7F) s += (char)getChar();
-                    else s += "?";
+                    utf8Encode(getChar(), s);
                     *this = Value(s);
                     break;
                 }
@@ -391,8 +390,7 @@ namespace IkigaiScript {
                 case Type::Char:
                 {
                     std::string s;
-                    if (getChar() <= 0x7F) s += (char)getChar();
-                    else s += "?";
+                    utf8Encode(getChar(), s);
                     *this = Value(s);
                     break;
                 }

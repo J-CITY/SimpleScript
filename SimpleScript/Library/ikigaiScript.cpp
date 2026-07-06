@@ -609,11 +609,11 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 						Int end = rv.inclusive ? rv.end_ : rv.end_ - 1;
 						if (var->getType() == Type::String) {
 							auto& s = var->getString();
-							Int len = (Int)s.size();
+							Int cpLen = (Int)utf8Length(s);
 							if (start < 0) start = 0;
-							if (end >= len) end = len - 1;
+							if (end >= cpLen) end = cpLen - 1;
 							if (start > end) return std::make_shared<Value>(std::string(""));
-							return std::make_shared<Value>(s.substr(start, end - start + 1));
+							return std::make_shared<Value>(utf8Slice(s, (size_t)start, (size_t)end));
 						}
 						auto makeSlice = [&](auto& container) {
 							Int len = (Int)container.size();
@@ -1090,7 +1090,21 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 										}},
 
 									{"find", [](const List& args) {
-										if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array) {
+										if (args.size() < 2) {
+											return std::make_shared<Value>();
+										}
+										// String substring search — returns code point index or null
+										if (args[0]->getType() == Type::String) {
+											if (args[1]->getType() != Type::String) {
+												return std::make_shared<Value>();
+											}
+											size_t startCp = (args.size() >= 3 && args[2]->getType() == Type::Int)
+												? (size_t)args[2]->getInt() : 0;
+											int idx = utf8Find(args[0]->getString(), args[1]->getString(), startCp);
+											if (idx < 0) return std::make_shared<Value>();
+											return std::make_shared<Value>((Int)idx);
+										}
+										if ((int)args[0]->getType() < (int)Type::Array) {
 											return std::make_shared<Value>();
 										}
 										if (args[0]->getType() == Type::Array) {
@@ -1350,9 +1364,7 @@ else {
 	auto copy = std::make_shared<Value>(*args[0]);
 
 	if (args[0]->getType() == Type::String) {
-		auto& str = copy->getString();
-		std::reverse(str.begin(), str.end());
-		return copy;
+		return std::make_shared<Value>(utf8Reverse(args[0]->getString()));
 	}
 else if (args[0]->getType() == Type::Array) {
  switch (copy->getArray().getType()) {
@@ -1455,7 +1467,8 @@ auto intdexA = indexA.getInt();
 auto intdexB = indexB.getInt();
 
 if (args[0]->getType() == Type::String) {
-	return std::make_shared<Value>(args[0]->getString().substr(intdexA, intdexB));
+	// intdexA = start code point, intdexB = count of code points
+	return std::make_shared<Value>(utf8Substr(args[0]->getString(), (size_t)intdexA, (size_t)intdexB));
 }
 else if (args[0]->getType() == Type::Array) {
  if (args[0]->getArray().getType() == args[1]->getType()) {
@@ -1554,11 +1567,8 @@ return std::make_shared<Value>();
 	{"split", [](const List& args) {
 		if (args.size() > 0 && args[0]->getType() == Type::String) {
 			if (args.size() == 1) {
-				std::vector<std::string> chars;
-				for (auto c : args[0]->getString()) {
-					chars.push_back(""s + c);
-				}
-				return std::make_shared<Value>(Array(chars));
+				// Split by code points, not bytes
+				return std::make_shared<Value>(Array(utf8SplitCodePoints(args[0]->getString())));
 			}
 			return std::make_shared<Value>(Array(split(args[0]->getString(), args[1]->getPrintString())));
 		}

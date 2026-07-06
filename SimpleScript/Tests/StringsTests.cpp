@@ -136,3 +136,14 @@ TEST_CASE("string + string via += operator", "[strings.builtins]") {
     interp.evaluate(R"(var s = "foo"; s += "bar";)");
     REQUIRE(getVarString(interp, "s") == "foobar");
 }
+
+TEST_CASE("find: substring in string returns code point index", "[strings.find]") {
+    auto interp = makeInterp();
+    REQUIRE(run(interp, R"(print(find("hello world", "world"));)") == "6");
+}
+
+TEST_CASE("find: substring not present returns null (no exception)", "[strings.find]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(var r = find("hello", "xyz");)");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+}

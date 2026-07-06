@@ -95,6 +95,60 @@ inline std::string utf8Slice(const std::string& s, size_t start, size_t end) {
     return result;
 }
 
+// Extract a substring starting at code point index `start`, for `count` code points.
+inline std::string utf8Substr(const std::string& s, size_t start, size_t count) {
+    if (count == 0) return "";
+    return utf8Slice(s, start, start + count - 1);
+}
+
+// Reverse a UTF-8 string by code points (not bytes).
+inline std::string utf8Reverse(const std::string& s) {
+    std::vector<std::string> cps;
+    size_t pos = 0;
+    while (pos < s.size()) {
+        size_t prev = pos;
+        utf8DecodeOne(s, pos);
+        cps.push_back(s.substr(prev, pos - prev));
+    }
+    std::string result;
+    for (auto it = cps.rbegin(); it != cps.rend(); ++it) result += *it;
+    return result;
+}
+
+// Split a UTF-8 string into individual code points, each as a UTF-8 string.
+inline std::vector<std::string> utf8SplitCodePoints(const std::string& s) {
+    std::vector<std::string> result;
+    size_t pos = 0;
+    while (pos < s.size()) {
+        size_t prev = pos;
+        utf8DecodeOne(s, pos);
+        result.push_back(s.substr(prev, pos - prev));
+    }
+    return result;
+}
+
+// Find the first occurrence of `needle` (as a UTF-8 string) in `haystack`,
+// starting at code point index `startCp`. Returns the code point index of the
+// first match, or -1 if not found.
+inline int utf8Find(const std::string& haystack, const std::string& needle, size_t startCp = 0) {
+    if (needle.empty()) return (int)startCp;
+    size_t bytePos = 0;
+    size_t cpIdx = 0;
+    // advance to startCp
+    while (bytePos < haystack.size() && cpIdx < startCp) {
+        utf8DecodeOne(haystack, bytePos);
+        ++cpIdx;
+    }
+    while (bytePos + needle.size() <= haystack.size()) {
+        if (haystack.compare(bytePos, needle.size(), needle) == 0) {
+            return (int)cpIdx;
+        }
+        utf8DecodeOne(haystack, bytePos);
+        ++cpIdx;
+    }
+    return -1;
+}
+
 // Decode first UTF-8 code point from a raw string literal content (after quotes stripped).
 // Handles \n \t \\ \" \' \u{XXXX} escapes.
 inline char32_t decodeCharLiteral(const std::string& val) {

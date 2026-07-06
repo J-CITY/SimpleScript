@@ -24,7 +24,7 @@ TEST_CASE("slice: string exclusive range", "[slice.string.exclusive]") {
     auto interp = makeInterp();
     interp.evaluate("var str = \"hello\";");
     interp.evaluate("var s = str[1..3];");
-    // bytes 1,2 = "el"
+    // code points 1,2 = "el"
     REQUIRE(run(interp, "print(s);") == "el");
 }
 
@@ -32,7 +32,7 @@ TEST_CASE("slice: string inclusive range", "[slice.string.inclusive]") {
     auto interp = makeInterp();
     interp.evaluate("var str = \"hello\";");
     interp.evaluate("var s = str[1..=3];");
-    // bytes 1,2,3 = "ell"
+    // code points 1,2,3 = "ell"
     REQUIRE(run(interp, "print(s);") == "ell");
 }
 
@@ -54,6 +54,6 @@ TEST_CASE("slice: range(container, a, b) existing builtin", "[slice.range.builti
     auto interp = makeInterp();
     interp.evaluate("var str = \"hello\";");
     interp.evaluate("var s = range(str, 0, 2);");
-    // range(str, 0, length) → substr
+    // range(str, start=0, count=2) → first 2 code points "he"
     REQUIRE(run(interp, "print(s);") == "he");
 }

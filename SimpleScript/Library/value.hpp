@@ -2,6 +2,7 @@
 
 #include <ostream>
 #include "types.hpp"
+#include "utf8Utils.hpp"
 namespace IkigaiScript {
     struct Null {};
 
@@ -290,11 +291,9 @@ namespace IkigaiScript {
         case Type::Char:
         {
             if (b.getType() == Type::String) {
-                // Convert Char to string then concatenate
+                // Convert Char to UTF-8 string then concatenate
                 std::string s;
-                // Basic conversion to UTF-8
-                if (a.getChar() <= 0x7F) s += (char)a.getChar();
-                else s += "?"; // Simplified, should use proper utf8 conversion
+                utf8Encode(a.getChar(), s);
                 auto val = Value{ s + b.getString() };
                 applyType(val);
                 return val;
