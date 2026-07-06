@@ -336,6 +336,32 @@ namespace IkigaiScript {
 		}
 	};
 
+	struct DeferExpression : public Expression {
+		std::vector<ExpressionPtr> subexpressions;
+
+		DeferExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Defer, par) {}
+
+		ExpressionPtr back() override {
+			return subexpressions.back();
+		}
+		
+		std::vector<ExpressionPtr>::iterator begin() override {
+			return subexpressions.begin();
+		}
+		
+		std::vector<ExpressionPtr>::iterator end() override {
+			return subexpressions.end();
+		}
+		
+		void push_back(ExpressionPtr ref) override {
+			subexpressions.push_back(ref);
+		}
+
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
+		}
+	};
+
 	struct ResolveVar : public Expression {
 		std::string name;
 

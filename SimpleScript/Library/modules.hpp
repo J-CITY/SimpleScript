@@ -1,5 +1,7 @@
 #pragma once
 #include "types.hpp"
+#include <string>
+#include <unordered_set>
 namespace IkigaiScript {
     using ModulePrivilegeFlags = uint8_t;
 
@@ -47,6 +49,11 @@ namespace IkigaiScript {
     struct Module {
         ModulePrivilegeFlags requiredPermissions;
         ScopePtr scope;
-		Module(ModulePrivilegeFlags f, ScopePtr s) : requiredPermissions(f), scope(s) {}
+        std::string sourcePath;
+        std::unordered_set<std::string> exports;
+        bool isScriptModule = false;
+
+        Module(ModulePrivilegeFlags f, ScopePtr s, std::string path = "", std::unordered_set<std::string> exp = {}, bool isScript = false)
+            : requiredPermissions(f), scope(s), sourcePath(std::move(path)), exports(std::move(exp)), isScriptModule(isScript) {}
     };
 }

@@ -34,6 +34,8 @@ namespace IkigaiScript {
 
 		IkigaiScriptInterpreter* interpreter = nullptr;
 		ScopePtr parseScope;
+		std::string currentScriptPath;
+		bool nextStatementIsExported = false;
 		ExpressionPtr currentExpression = nullptr;
 		ExpressionPtr previousExpression = nullptr;
 		

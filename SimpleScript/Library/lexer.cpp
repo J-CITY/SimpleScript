@@ -142,8 +142,14 @@ std::vector<std::string_view> Lexer::Tokenize(std::string_view input) {
 			auto stride = 1;
 			if (contains(MultiCharTokenStartChars, input[pos]) && pos + 1 < input.size() && contains(MultiCharTokenStartChars, input[pos + 1])) {
 				if (input[pos] == '/' && input[pos + 1] == '/') {
-					exitFromComment = true;
-					break;
+					auto nextLine = input.find('\n', pos);
+					if (nextLine == std::string_view::npos) {
+						exitFromComment = true;
+						break;
+					}
+					pos = nextLine;
+					lpos = pos;
+					continue;
 				}
 				++stride;
 			}

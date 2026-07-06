@@ -1,5 +1,6 @@
 
 #include <fstream>
+#include <filesystem>
 #include "parser.h"
 
 #include "ikigaiScript.h"
@@ -234,7 +235,234 @@ ScopePtr IkigaiScriptInterpreter::newModule(const std::string& name, ModulePrivi
 		newFunction(funcPair.first, scope, funcPair.second);
 	}
 
+	if (!flags) {
+		registerModuleName(name, modules.size() - 1);
+	}
+
 	return modSource.back().scope;
+}
+
+namespace fs = std::filesystem;
+
+static std::string resolvePath(const std::string& path, const std::string& importerPath) {
+	try {
+		fs::path p(path);
+		if (p.is_absolute()) {
+			return fs::weakly_canonical(p).generic_string();
+		}
+		if (!importerPath.empty()) {
+			fs::path imp(importerPath);
+			return fs::weakly_canonical(imp.parent_path() / p).generic_string();
+		}
+		return fs::weakly_canonical(fs::current_path() / p).generic_string();
+	}
+	catch (...) {
+		return path;
+	}
+}
+
+struct ParserStateSaver {
+	Parser* parser;
+	ParseState parseState;
+	std::vector<std::string_view> parseStrings;
+	int outerNestLayer;
+	bool lastStatementClosedScope;
+	ParseState prevState;
+	int parseLambda;
+	int parseLambdaBrakets;
+	int genericBodyNesting;
+	int getExpressionDepth;
+	ExpressionPtr currentExpression;
+	ExpressionPtr previousExpression;
+	bool nextStatementIsExported;
+
+	ParserStateSaver(Parser* p) : parser(p) {
+		parseState = p->parseState;
+		parseStrings = std::move(p->parseStrings);
+		outerNestLayer = p->outerNestLayer;
+		lastStatementClosedScope = p->lastStatementClosedScope;
+		prevState = p->prevState;
+		parseLambda = p->parseLambda;
+		parseLambdaBrakets = p->parseLambdaBrakets;
+		genericBodyNesting = p->genericBodyNesting;
+		getExpressionDepth = p->getExpressionDepth;
+		currentExpression = p->currentExpression;
+		previousExpression = p->previousExpression;
+		nextStatementIsExported = p->nextStatementIsExported;
+
+		p->clearParseStacks();
+		p->currentExpression = nullptr;
+		p->previousExpression = nullptr;
+		p->nextStatementIsExported = false;
+	}
+
+	~ParserStateSaver() {
+		parser->parseState = parseState;
+		parser->parseStrings = std::move(parseStrings);
+		parser->outerNestLayer = outerNestLayer;
+		parser->lastStatementClosedScope = lastStatementClosedScope;
+		parser->prevState = prevState;
+		parser->parseLambda = parseLambda;
+		parser->parseLambdaBrakets = parseLambdaBrakets;
+		parser->genericBodyNesting = genericBodyNesting;
+		parser->getExpressionDepth = getExpressionDepth;
+		parser->currentExpression = currentExpression;
+		parser->previousExpression = previousExpression;
+		parser->nextStatementIsExported = nextStatementIsExported;
+	}
+};
+
+Module& IkigaiScriptInterpreter::loadScriptModule(const std::string& path, const std::string& importerPath) {
+	ParserStateSaver saver(parser);
+	std::string normPath = resolvePath(path, importerPath);
+
+	if (std::find(moduleLoadStack.begin(), moduleLoadStack.end(), normPath) != moduleLoadStack.end()) {
+		throw Exception("Circular import detected: " + normPath);
+	}
+
+	auto pathIt = moduleIndexByPath.find(normPath);
+	if (pathIt != moduleIndexByPath.end()) {
+		return modules[pathIt->second];
+	}
+
+	moduleLoadStack.push_back(normPath);
+
+	std::string s;
+	auto file = std::ifstream(normPath);
+	if (!file) {
+		moduleLoadStack.pop_back();
+		throw Exception("Module file not found: " + normPath);
+	}
+	file.seekg(0, std::ios::end);
+	s.reserve(file.tellg());
+	file.seekg(0, std::ios::beg);
+	if (normPath.size() > 3 && normPath.substr(normPath.size() - 3) == ".sh") {
+		std::string tmp;
+		getline(file, tmp);
+	}
+	s.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+	std::string stemName = fs::path(normPath).stem().string();
+	auto moduleScope = std::make_shared<Scope>(stemName, this);
+
+	modules.emplace_back(0, moduleScope, normPath, std::unordered_set<std::string>{}, true);
+	size_t modIdx = modules.size() - 1;
+
+	moduleIndexByPath[normPath] = modIdx;
+	moduleIndexByName[stemName] = modIdx;
+
+	auto oldPath = parser->currentScriptPath;
+	parser->currentScriptPath = normPath;
+
+	auto oldScope = parser->parseScope;
+	parser->parseScope = moduleScope;
+
+	bool failed = false;
+	try {
+		failed = parser->evaluate(s);
+	}
+	catch (...) {
+		parser->parseScope = oldScope;
+		parser->currentScriptPath = oldPath;
+		moduleLoadStack.pop_back();
+		throw;
+	}
+	parser->parseScope = oldScope;
+	parser->currentScriptPath = oldPath;
+
+	moduleLoadStack.pop_back();
+	if (failed) {
+		throw Exception("Failed to evaluate module: " + normPath);
+	}
+
+	std::string finalName = moduleScope->name;
+	if (finalName != stemName) {
+		moduleIndexByName.erase(stemName);
+		moduleIndexByName[finalName] = modIdx;
+	}
+
+	return modules[modIdx];
+}
+
+Module* IkigaiScriptInterpreter::findModuleByName(const std::string& name) {
+	auto it = moduleIndexByName.find(name);
+	if (it != moduleIndexByName.end()) {
+		return &modules[it->second];
+	}
+	return nullptr;
+}
+
+bool IkigaiScriptInterpreter::isExported(const Module& mod, const std::string& symbol) {
+	if (!mod.isScriptModule) {
+		return true;
+	}
+	return mod.exports.contains(symbol);
+}
+
+void IkigaiScriptInterpreter::bindImportedSymbol(ScopePtr scope, const Module& mod, const std::string& name, const std::string& alias) {
+	if (!isExported(mod, name)) {
+		throw Exception("Symbol '" + name + "' is not exported from module '" + mod.scope->name + "'");
+	}
+
+	std::string targetName = alias.empty() ? name : alias;
+
+	if (scope->variables.contains(targetName) || scope->functions.contains(targetName) || scope->scopes.contains(targetName)) {
+		throw Exception("Import conflict: name '" + targetName + "' is already defined in the current scope");
+	}
+
+	bool found = false;
+
+	auto classIt = mod.scope->scopes.find(name);
+	if (classIt != mod.scope->scopes.end()) {
+		scope->scopes[targetName] = classIt->second;
+		auto funcIt = mod.scope->functions.find(name);
+		if (funcIt != mod.scope->functions.end()) {
+			scope->functions[targetName] = funcIt->second;
+			auto funcvar = resolveVariable(targetName, scope);
+			*funcvar = Value(funcIt->second);
+		}
+		found = true;
+	}
+
+	if (!found) {
+		auto funcIt = mod.scope->functions.find(name);
+		if (funcIt != mod.scope->functions.end()) {
+			scope->functions[targetName] = funcIt->second;
+			auto funcvar = resolveVariable(targetName, scope);
+			*funcvar = Value(funcIt->second);
+			found = true;
+		}
+	}
+
+	if (!found) {
+		auto varIt = mod.scope->variables.find(name);
+		if (varIt != mod.scope->variables.end()) {
+			scope->variables[targetName] = varIt->second;
+			found = true;
+		}
+	}
+
+	if (!found) {
+		throw Exception("Symbol '" + name + "' not found in module '" + mod.scope->name + "'");
+	}
+}
+
+void IkigaiScriptInterpreter::registerModuleName(const std::string& name, size_t index) {
+	moduleIndexByName[name] = index;
+}
+
+void IkigaiScriptInterpreter::registerExport(ScopePtr scope, const std::string& name) {
+	while (scope && scope->parent) {
+		scope = scope->parent;
+	}
+	if (scope) {
+		auto iter = std::find_if(modules.begin(), modules.end(), [&scope](const auto& mod) {
+			return mod.scope == scope;
+		});
+		if (iter != modules.end()) {
+			iter->exports.insert(name);
+		}
+	}
 }
 
 Module* IkigaiScriptInterpreter::getOptionalModule(const std::string& name) {
@@ -243,6 +471,36 @@ Module* IkigaiScriptInterpreter::getOptionalModule(const std::string& name) {
 		return &*iter;
 	}
 	return nullptr;
+}
+
+
+void IkigaiScriptInterpreter::registerDefer(ScopePtr scope, ExpressionPtr body) {
+	scope->deferred.push_back(body);
+}
+
+void IkigaiScriptInterpreter::runDefers(ScopePtr scope, Class* classs, size_t fromIndex) {
+	while (scope->deferred.size() > fromIndex) {
+		auto body = scope->deferred.back();
+		scope->deferred.pop_back();
+		executeDeferBody(body, scope, classs);
+	}
+}
+
+void IkigaiScriptInterpreter::executeDeferBody(ExpressionPtr body, ScopePtr scope, Class* classs) {
+	BlockResult res;
+	if (body->type == ExpressionType::Defer) {
+		res = needsToReturn(static_cast<DeferExpression*>(body)->subexpressions, scope, classs);
+	}
+	else if (body->type == ExpressionType::Block) {
+		res = needsToReturn(static_cast<BlockExpression*>(body)->subexpressions, scope, classs);
+	}
+	else {
+		res = needsToReturn(body, scope, classs);
+	}
+
+	if (res.explicitReturn != nullptr || res.interrupt != LoopInterupt::None) {
+		throw Exception("defer body cannot transfer control");
+	}
 }
 
 
@@ -1891,80 +2149,74 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 
 		ValuePtr returnVal = nullptr;
 
-		if (fnc->type == FunctionType::Constructor) {
-			auto hasExplicitSuperCall = [](const std::vector<ExpressionPtr>& subs) {
-				for (auto&& sub : subs) {
-					if (sub->type == ExpressionType::FunctionCall) {
-						auto funcExpr = static_cast<FunctionExpression*>(sub);
-						if (funcExpr->function->getType() == Type::String && funcExpr->function->getString() == "super") {
-							return true;
+		try {
+			if (fnc->type == FunctionType::Constructor) {
+				auto hasExplicitSuperCall = [](const std::vector<ExpressionPtr>& subs) {
+					for (auto&& sub : subs) {
+						if (sub->type == ExpressionType::FunctionCall) {
+							auto funcExpr = static_cast<FunctionExpression*>(sub);
+							if (funcExpr->function->getType() == Type::String && funcExpr->function->getString() == "super") {
+								return true;
+							}
+						}
+					}
+					return false;
+				};
+
+				bool isBaseConstructorCall = (classs != nullptr);
+				if (isBaseConstructorCall) {
+					for (auto&& sub : subexpressions) {
+						getValue(sub, scope, classs);
+					}
+					returnVal = std::make_shared<Value>();
+				}
+				else {
+					returnVal = std::make_shared<Value>(make_shared<Class>(scope));
+					returnVal->typeDescriptor.subtype = fnc->name;
+					auto activeClasss = returnVal->getClass().get();
+					if (!hasExplicitSuperCall(subexpressions)) {
+						for (const auto& baseClassName : activeClasss->baseClasses) {
+							auto baseScope = resolveScope(baseClassName, globalScope);
+							auto baseCtor = resolveFunction(baseClassName, baseScope);
+							callFunction(baseCtor, scope, {}, activeClasss);
+						}
+					}
+					for (auto&& sub : subexpressions) {
+						getValue(sub, scope, activeClasss);
+					}
+				}
+			}
+			else {
+				for (auto&& sub : subexpressions) {
+					if (sub->type == ExpressionType::Return) {
+						returnVal = getValue(sub, scope, classs);
+						break;
+					}
+					else {
+						auto result = consolidated(sub, scope, classs);
+						if (result->type == ExpressionType::Return) {
+							returnVal = static_cast<ValueNode*>(result)->value;
+							break;
 						}
 					}
 				}
-				return false;
-			};
-
-			bool isBaseConstructorCall = (classs != nullptr);
-			if (isBaseConstructorCall) {
-				for (auto&& sub : subexpressions) {
-					getValue(sub, scope, classs);
-				}
-				returnVal = std::make_shared<Value>();
 			}
-			else {
-				returnVal = std::make_shared<Value>(make_shared<Class>(scope));
-				returnVal->typeDescriptor.subtype = fnc->name;
-				auto activeClasss = returnVal->getClass().get();
-				if (!hasExplicitSuperCall(subexpressions)) {
-					for (const auto& baseClassName : activeClasss->baseClasses) {
-						auto baseScope = resolveScope(baseClassName, globalScope);
-						auto baseCtor = resolveFunction(baseClassName, baseScope);
-						callFunction(baseCtor, scope, {}, activeClasss);
-					}
-				}
-				for (auto&& sub : subexpressions) {
-					getValue(sub, scope, activeClasss);
+
+			if (fnc->type == FunctionType::Constructor && returnVal->getType() == Type::Class) {
+				for (auto&& vr : newVars) {
+					scope->variables.erase(vr);
+					returnVal->getClass()->variables.erase(vr);
 				}
 			}
 		}
-		else {
-			for (auto&& sub : subexpressions) {
-				if (sub->type == ExpressionType::Return) {
-					returnVal = getValue(sub, scope, classs);
-					break;
-				}
-				//else if (sub->type == ExpressionType::Yeld) {
-				//	//if (fnc->isCoro) {
-				//	//	auto parScope = scope->parent;
-				//	//	parScope->coroScopes
-				//	//}
-				//	//else {
-				//	//	throw;
-				//	//}
-				//	returnVal = getValue(sub, scope, classs);
-				//	break;
-				//}
-				else {
-					auto result = consolidated(sub, scope, classs);
-					if (result->type == ExpressionType::Return) {
-						returnVal = static_cast<ValueNode*>(result)->value;
-						break;
-					}
-					//if (result->type == ExpressionType::Yeld) {
-					//	returnVal = static_cast<ValueNode*>(result)->value;
-					//	break;
-					//}
-				}
-			}
+		catch (...) {
+			closeScope(scope);
+			throw;
 		}
 
-		if (fnc->type == FunctionType::Constructor && returnVal->getType() == Type::Class) {
-			for (auto&& vr : newVars) {
-				scope->variables.erase(vr);
-				returnVal->getClass()->variables.erase(vr);
-			}
+		if (returnVal) {
+			returnVal = std::make_shared<Value>(*returnVal);
 		}
-
 		closeScope(scope);
 		return returnVal ? returnVal : std::make_shared<Value>();
 	}
@@ -2148,6 +2400,14 @@ FunctionRef IkigaiScriptInterpreter::resolveFunction(const std::string& name, Sc
 			scope = scope->parent;
 		}
 	}
+	if (!scope) {
+		for (auto m : modules) {
+			auto iter = m.scope->functions.find(name);
+			if (iter != m.scope->functions.end()) {
+				return iter->second;
+			}
+		}
+	}
 	auto& func = initialScope->functions[name];
 	func = std::make_shared<Function>(name);
 	return func;
@@ -2186,6 +2446,18 @@ FunctionRef IkigaiScriptInterpreter::resolveOperator(const std::string& name, Sc
 		}
 		else {
 			scope = scope->parent;
+		}
+	}
+	if (!scope) {
+		for (auto m : modules) {
+			auto iter = m.scope->operators.find(name);
+			if (iter != m.scope->operators.end()) {
+				for (auto oper : iter->second) {
+					if (checkTypesInFunction(oper, args)) {
+						return oper;
+					}
+				}
+			}
 		}
 	}
 	//auto& func = initialScope->functions[name];
@@ -2419,6 +2691,17 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		return exp;
 	case ExpressionType::MemberVariable: {
 		auto expr = static_cast<MemberVariable*>(exp);
+
+		if (expr->object && expr->object->type == ExpressionType::ResolveVar) {
+			auto objName = static_cast<ResolveVar*>(expr->object)->name;
+			if (auto* mod = findModuleByName(objName)) {
+				if (!isExported(*mod, expr->name)) {
+					throw Exception("Symbol '" + expr->name + "' is not exported from module '" + objName + "'");
+				}
+				return arena.make<ValueNode>(resolveVariable(expr->name, mod->scope));
+			}
+		}
+
 		auto isSuperExpr = [](ExpressionPtr obj) {
 			if (!obj) return false;
 			if (obj->type == ExpressionType::ResolveVar) {
@@ -2461,6 +2744,17 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		List args;
 		for (auto&& sub : expr->subexpressions) {
 			args.push_back(getValue(sub, scope, classs));
+		}
+
+		if (expr->object && expr->object->type == ExpressionType::ResolveVar) {
+			auto objName = static_cast<ResolveVar*>(expr->object)->name;
+			if (auto* mod = findModuleByName(objName)) {
+				if (!isExported(*mod, expr->functionName)) {
+					throw Exception("Symbol '" + expr->functionName + "' is not exported from module '" + objName + "'");
+				}
+				auto fnc = resolveFunction(expr->functionName, mod->scope);
+				return arena.make<ValueNode>(callFunction(fnc, scope, args, nullptr));
+			}
 		}
 
 		auto isSuperExpr = [](ExpressionPtr obj) {
@@ -2582,9 +2876,11 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		};
 
 		while (returnVal == nullptr && _getValue()) {
+			size_t deferMark = scope->deferred.size();
 			auto res = needsToReturn(loopexp->subexpressions, scope, classs);
 			returnVal = res.explicitReturn;
 			if (res.interrupt == LoopInterupt::Break) {
+				runDefers(scope, classs, deferMark);
 				break;
 			}
 			if (res.lastValue != nullptr) {
@@ -2593,6 +2889,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			if (returnVal == nullptr && loopexp->iterateExpression) {
 				getValue(loopexp->iterateExpression, scope, classs);
 			}
+			runDefers(scope, classs, deferMark);
 		}
 		closeScope(scope);
 		if (returnVal) {
@@ -2630,12 +2927,14 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 				scope->variables[foreachExp->iterateNames[2]] = std::make_shared<Value>(*val);
 			}
 			
+			size_t deferMark = scope->deferred.size();
 			auto r = needsToReturn(subs, scope, classs);
 			checkLoopInterupt = r.interrupt;
 			returnVal = r.explicitReturn;
 			if (r.lastValue) {
 				results.push_back(r.lastValue);
 			}
+			runDefers(scope, classs, deferMark);
 		};
 
 		size_t idx = 0;
@@ -2876,6 +3175,12 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		return arena.make<ValueNode>(lastAssigned ? lastAssigned : std::make_shared<Value>());
 	}
 	break;
+	case ExpressionType::Defer:
+	{
+		registerDefer(scope, exp);
+		return arena.make<ValueNode>(std::make_shared<Value>());
+	}
+	break;
 	case ExpressionType::Block:
 	{
 		scope = newScope("block", scope);
@@ -2952,7 +3257,10 @@ ScopePtr IkigaiScriptInterpreter::insertScope(ScopePtr existing, ScopePtr parent
 	return parent->insertScope(existing);
 }
 
-void IkigaiScriptInterpreter::closeScope(ScopePtr& scope) {
+void IkigaiScriptInterpreter::closeScope(ScopePtr& scope, bool runDeferred) {
+	if (runDeferred) {
+		runDefers(scope, nullptr);
+	}
 	if (scope->parent) {
 		if (scope->isClassScope) {
 			scope = scope->parent;

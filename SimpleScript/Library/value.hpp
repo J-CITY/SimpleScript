@@ -400,6 +400,9 @@ namespace IkigaiScript {
         upconvertThrowOnNonNumberToNumberCompare(a, b);
         switch (a.getType()) {
         case Type::Int:
+            if (b.getInt() == 0) {
+                throw Exception("Division by zero");
+            }
             return Value{ a.getInt() / b.getInt() };
             break;
         case Type::Float:

@@ -404,7 +404,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				parse(";");
 			}
             
-			interpreter->closeScope(parseScope);
+			interpreter->closeScope(parseScope, false);
             
 			parseScope = oldParseScope;
 			currentExpression = oldCurrentExpr;
@@ -1039,6 +1039,11 @@ void Parser::parse(std::string_view token) {
 		}
 		else if (token == "{") {
 			parseScope = interpreter->newScope("__anon"s, parseScope);
+			if (currentExpression && currentExpression->type == ExpressionType::FunctionDef) {
+				auto newexpr = interpreter->arena.make<BlockExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
 			clearParseStacks();
 		}
 		else if (token == "}") {
@@ -1060,7 +1065,7 @@ void Parser::parse(std::string_view token) {
 						interpreter->newConstructor(className, parseScope->parent, defaultCtor);
 					}
 				}
-				interpreter->closeScope(parseScope);
+				interpreter->closeScope(parseScope, false);
 			}
 			if (previousExpression && previousExpression->type != ExpressionType::IfElse
 				&& previousExpression->type != ExpressionType::Match) {
@@ -1079,8 +1084,25 @@ void Parser::parse(std::string_view token) {
 		else if (token == "break") {
 			parseState = ParseState::BreakLine;
 		}
-		else if (token == "import") {
+		else if (token == "import" || token == "using") {
 			parseState = ParseState::ImportModule;
+		}
+		else if (token == "module") {
+			parseState = ParseState::DefineModule;
+		}
+		else if (token == "export") {
+			nextStatementIsExported = true;
+		}
+		else if (token == "defer") {
+			parseState = ParseState::DeferBody;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<DeferExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<DeferExpression>();
+			}
 		}
 		else if (token == ";") {
 			if (currentExpression) {
@@ -1300,7 +1322,7 @@ void Parser::parse(std::string_view token) {
 				parseState = ParseState::BeginExpression;
 				bool closedExpr = closeCurrentExpression();
 				if (!closedExpr || parseScope->name == "__anon") {
-					interpreter->closeScope(parseScope);
+					interpreter->closeScope(parseScope, false);
 				}
 				if (previousExpression && previousExpression->type != ExpressionType::IfElse
 					&& previousExpression->type != ExpressionType::Match) {
@@ -1504,6 +1526,16 @@ void Parser::parse(std::string_view token) {
 			parseStrings.push_back(token);
 		}
 		break;
+	case ParseState::DeferBody:
+		if (token == "{") {
+			parseState = ParseState::BeginExpression;
+			parseScope = interpreter->newScope("__anon"s, parseScope);
+			clearParseStacks();
+		}
+		else {
+			throw Exception("Expected '{' after 'defer'");
+		}
+		break;
 	case ParseState::Decorator:
 		pendingMetadata.push_back(Metadata{std::string(token)});
 		parseState = ParseState::DecoratorArgs;
@@ -1602,6 +1634,13 @@ void Parser::parse(std::string_view token) {
 				std::vector<std::string_view> rhs(parseStrings.begin() + pi, parseStrings.end());
 				ExpressionPtr defineExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
 				auto astNode = interpreter->arena.make<DefineVar>(std::move(patNames), defineExpr, tDescriptor);
+				if (nextStatementIsExported) {
+					for (auto& n : astNode->patternNames) {
+						if (n != "_") {
+							interpreter->registerExport(parseScope, n);
+						}
+					}
+				}
 				if (currentExpression) {
 					currentExpression->push_back(astNode);
 				} else {
@@ -1643,6 +1682,9 @@ void Parser::parse(std::string_view token) {
 					defineExpr = getExpression(std::move(parseStrings), parseScope, nullptr);
 				}
 			}
+			if (nextStatementIsExported) {
+				interpreter->registerExport(parseScope, std::string(name));
+			}
 			if (currentExpression) {
 				currentExpression->push_back(interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor));
 			}
@@ -1661,6 +1703,9 @@ void Parser::parse(std::string_view token) {
 		}
 		break;
 	case ParseState::DefineClass:
+		if (nextStatementIsExported) {
+			interpreter->registerExport(parseScope, std::string(token));
+		}
 		parseScope = interpreter->newClassScope(std::string(token), parseScope);
 		if (pendingMetadata.size()) {
 			parseScope->scopeMetadata = pendingMetadata;
@@ -1708,27 +1753,124 @@ void Parser::parse(std::string_view token) {
 		parseStrings.push_back(token);
 		parseState = ParseState::CoroArgs;
 		break;
-	case ParseState::ImportModule:
-		clearParseStacks();
-		if (token.size() > 2 && token.front() == '\"' && token.back() == '\"') {
-			// import file
-			evaluateFile(std::string(token.substr(1, token.size() - 2)));
+	case ParseState::DefineModule:
+		if (token == ";") {
+			if (parseStrings.size() != 1) {
+				throw Exception("Malformed module definition syntax");
+			}
+			std::string modName = std::string(parseStrings[0]);
+			parseScope->name = modName;
+			
+			for (size_t idx = 0; idx < interpreter->modules.size(); ++idx) {
+				if (interpreter->modules[idx].scope == parseScope) {
+					interpreter->registerModuleName(modName, idx);
+					break;
+				}
+			}
 			clearParseStacks();
 		}
 		else {
-			auto modName = std::string(token);
-			auto iter = std::find_if(interpreter->modules.begin(), interpreter->modules.end(), [&modName](auto& mod) {return mod.scope->name == modName; });
-			if (iter == interpreter->modules.end()) {
-				auto newMod = interpreter->getOptionalModule(modName);
-				if (newMod) {
-					if (shouldAllow(interpreter->allowedModulePrivileges, newMod->requiredPermissions)) {
-						interpreter->modules.emplace_back(newMod->requiredPermissions, newMod->scope);
-					}
-					else {
-						throw Exception("Error: Cannot import restricted module: "s + modName);
+			parseStrings.push_back(token);
+		}
+		break;
+	case ParseState::ImportModule:
+		if (token == ";") {
+			if (parseStrings.empty()) {
+				clearParseStacks();
+				break;
+			}
+			
+			// Форма: using alias = Math.symbol
+			if (parseStrings.size() >= 5 && parseStrings[1] == "=") {
+				std::string alias = std::string(parseStrings[0]);
+				std::string modName = std::string(parseStrings[2]);
+				if (parseStrings[3] != ".") {
+					throw Exception("Malformed using alias syntax: expected '.'");
+				}
+				std::string symbol = std::string(parseStrings[4]);
+				auto* mod = interpreter->findModuleByName(modName);
+				if (!mod) {
+					throw Exception("Module '" + modName + "' not found");
+				}
+				interpreter->bindImportedSymbol(parseScope, *mod, symbol, alias);
+				clearParseStacks();
+				break;
+			}
+			
+			// Форма: import "path"
+			if (parseStrings.size() == 1 && parseStrings[0].front() == '"') {
+				std::string path = std::string(parseStrings[0].substr(1, parseStrings[0].size() - 2));
+				interpreter->loadScriptModule(path, currentScriptPath);
+				clearParseStacks();
+				break;
+			}
+			
+			// Форма: import { a, b as c } from Math или using { a, b as c } from Math
+			if (parseStrings.size() >= 4 && parseStrings[0] == "{") {
+				size_t closeBraceIdx = 0;
+				for (size_t i = 1; i < parseStrings.size(); ++i) {
+					if (parseStrings[i] == "}") {
+						closeBraceIdx = i;
+						break;
 					}
 				}
+				if (closeBraceIdx == 0 || closeBraceIdx + 2 >= parseStrings.size() || parseStrings[closeBraceIdx + 1] != "from") {
+					throw Exception("Malformed selective import/using syntax");
+				}
+				
+				std::string modName = std::string(parseStrings[closeBraceIdx + 2]);
+				auto* mod = interpreter->findModuleByName(modName);
+				if (!mod) {
+					throw Exception("Module '" + modName + "' not found");
+				}
+				
+				for (size_t i = 1; i < closeBraceIdx; ) {
+					if (parseStrings[i] == ",") {
+						i++;
+						continue;
+					}
+					std::string symbol = std::string(parseStrings[i++]);
+					std::string alias = symbol;
+					if (i < closeBraceIdx && parseStrings[i] == "as") {
+						i++;
+						if (i >= closeBraceIdx) {
+							throw Exception("Expected alias name after 'as'");
+						}
+						alias = std::string(parseStrings[i++]);
+					}
+					interpreter->bindImportedSymbol(parseScope, *mod, symbol, alias);
+				}
+				clearParseStacks();
+				break;
 			}
+			
+			// Форма: import Math
+			if (parseStrings.size() == 1) {
+				std::string modName = std::string(parseStrings[0]);
+				auto* mod = interpreter->findModuleByName(modName);
+				if (!mod) {
+					auto newMod = interpreter->getOptionalModule(modName);
+					if (newMod) {
+						if (shouldAllow(interpreter->allowedModulePrivileges, newMod->requiredPermissions)) {
+							interpreter->modules.emplace_back(newMod->requiredPermissions, newMod->scope);
+							interpreter->registerModuleName(modName, interpreter->modules.size() - 1);
+						}
+						else {
+							throw Exception("Error: Cannot import restricted module: " + modName);
+						}
+					}
+					else {
+						throw Exception("Unknown module: " + modName);
+					}
+				}
+				clearParseStacks();
+				break;
+			}
+			
+			throw Exception("Malformed import/using statement");
+		}
+		else {
+			parseStrings.push_back(token);
 		}
 		break;
 	case ParseState::FuncArgs:
@@ -1899,6 +2041,10 @@ void Parser::parse(std::string_view token) {
 				(isOperator ? 
 					interpreter->newOperator(std::string(fncName), parseScope, args, types, defValues) : 
 					interpreter->newFunction(std::string(fncName), parseScope, args, types, defValues));
+			
+			if (nextStatementIsExported) {
+				interpreter->registerExport(parseScope, std::string(fncName));
+			}
 			
 			newfunc->genericParams = genericParams;
 
@@ -2101,6 +2247,12 @@ void Parser::clearState() {
 	if (interpreter->modules.size() > 1) {
 		interpreter->modules.erase(interpreter->modules.begin() + 1, interpreter->modules.end());
 	}
+	interpreter->moduleIndexByName.clear();
+	interpreter->moduleIndexByPath.clear();
+	interpreter->moduleLoadStack.clear();
+	if (!interpreter->modules.empty()) {
+		interpreter->registerModuleName(interpreter->modules[0].scope->name, 0);
+	}
 }
 
 // general purpose clear to reset state machine for next statement
@@ -2110,6 +2262,7 @@ void Parser::clearParseStacks() {
 	outerNestLayer = 0;
 	parseLambdaBrakets = 0;
 	parseLambda = 0;
+	nextStatementIsExported = false;
 }
 
 bool Parser::closeCurrentExpression() {
@@ -2119,6 +2272,9 @@ bool Parser::closeCurrentExpression() {
 			currentExpression = currentExpression->parent;
 		}
 		else {
+			if (parseScope->name == "__anon" && currentExpression->type == ExpressionType::FunctionDef) {
+				return false;
+			}
 			if (currentExpression->type != ExpressionType::FunctionDef
 				&& currentExpression->type != ExpressionType::IfElse
 				&& currentExpression->type != ExpressionType::Match

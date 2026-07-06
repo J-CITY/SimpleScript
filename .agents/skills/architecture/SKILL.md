@@ -365,3 +365,48 @@ Decorators are **metadata only** — they do not affect runtime semantics; they 
 ## 17. Visitor Pattern (External Consumers)
 
 For bytecode compilers or visual editors, use the **Visitor** pattern — do NOT embed code-gen or UI logic into AST nodes. AST nodes must expose data through `accept(Visitor&)` interfaces for analytical passes.
+
+---
+
+## 18. Module System (Verse-like)
+
+SimpleScript implements a modular system inspired by the Verse programming language.
+
+### Syntax & Keywords
+- **`module Name;`**: Declares that the current file defines a module named `Name`. It updates `parseScope->name` and registers the module in the interpreter registry.
+- **`export <statement>`**: Used before variable, constant, function, or class definitions. Marks the defined symbol as exported, registering it in `mod.exports`.
+- **`import "path";`**: Loads and evaluates a script file as a module. Paths are resolved relatively and canonicalized.
+- **`import Math;`**: Imports a built-in module.
+- **`import/using { a, b as c } from Math;`**: Selectively imports exported symbols from module `Math` into the current scope (with optional renaming via `as`).
+- **`using a = Math.b;`**: Binds a single symbol from `Math.b` as `a` in the current scope.
+- **Qualified access (`Module.symbol` / `Module.func()`)**: Allows calling or reading exported symbols of a module using dot-notation.
+
+### Compiler & Runtime Architecture
+1. **Isolated Module Scopes**: Each script module is parsed and evaluated in an isolated scope (`parent = nullptr`).
+2. **Path Canonicalization & Cache**: Modules are cached in `moduleIndexByPath` and `moduleIndexByName`. Circular imports are checked via `moduleLoadStack` before cache hits.
+3. **Parser State Preservation (`ParserStateSaver`)**: Since imports trigger recursive `evaluate()` calls mid-parse, the `ParserStateSaver` RAII structure preserves the parser's state, stacks, and current expressions, ensuring re-entrant safety.
+4. **Symbol Binding (`bindImportedSymbol`)**: Copies references of functions, variables, and class scopes from the module's scope into the importing scope. For functions and class constructors, it also populates `scope->variables` with `Value(FunctionRef)` to make them callable by name.
+5. **Qualified Resolving**: `MemberVariable` and `MemberFunctionCall` expressions check if the LHS is a module name. If so, they redirect resolution to the module's scope and validate that the symbol is exported (`isExported`).
+
+---
+
+## 19. Defer Blocks (Verse-like)
+
+SimpleScript implements scope-based deferred execution using the `defer` keyword.
+
+### Syntax & Semantics
+- **`defer { statements; }`**: Registers the block of statements to be executed when the current runtime scope is popped.
+- **Execution Order**: Multiple `defer` statements in the same scope are executed in strict **LIFO** (Last In, First Out) order.
+- **Scope-based**: `defer` statements inside functions, loops, or `{ }` blocks are tied to their respective scopes.
+- **Loop Watermarks**: For loops (`Loop`) and iteration blocks (`ForEach`), defers registered inside an iteration are run at the end of that iteration (via watermarking `scope->deferred.size()`), preventing defer leakages across iterations.
+- **Restrictions**: Transferring control out of a defer block (using `return`, `break`, or `continue`) is strictly forbidden and triggers a runtime `Exception`.
+- **Exception Guarantee**: If a function exits via throwing an exception, all registered defers in its call frame scope are still guaranteed to run during unwinding (via try-catch guard in `callFunction` calling `closeScope`).
+
+### Technical Architecture
+1. **Scope Registration**: Registered defers are stored in `scope->deferred` (a vector of `ExpressionPtr`).
+2. **`closeScope(scope, runDeferred = true)`**: Performs scope teardown. If `runDeferred` is `true`, it triggers `runDefers()`. Note that during parse-time (compilation), `closeScope` is called with `runDeferred = false` to prevent executing defers during syntax analysis.
+3. **`runDefers(scope, classs, fromIndex)`**: Drains and executes deferred statements from the end of `scope->deferred` (LIFO) down to `fromIndex` using `executeDeferBody`.
+4. **`executeDeferBody`**: Resolves the defer body expressions and validates that they did not trigger any control flow interrupt (`explicitReturn` or `interrupt` in the `BlockResult` returned by `needsToReturn`).
+5. **Return Safety**: The return value of a function is copied (`std::make_shared<Value>(*returnVal)`) before `closeScope` runs, guaranteeing that deferred actions modifying local variables do not affect the already calculated return value of the function.
+
+

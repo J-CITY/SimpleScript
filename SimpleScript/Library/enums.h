@@ -99,7 +99,8 @@ namespace IkigaiScript
 		NamedArgument,
 		Match,
 		TupleLiteral,
-		DestructuringAssign
+		DestructuringAssign,
+		Defer
 	};
 
 	enum class ParseState : uint8_t {
@@ -125,6 +126,7 @@ namespace IkigaiScript
 		LoopCall,
 		ForEach,
 		ImportModule,
+		DefineModule,
 		Decorator,
 		DecoratorArgs,
 		DecoratorArgsList,
@@ -132,7 +134,8 @@ namespace IkigaiScript
 		DefineDynamic,
 		MatchCall,
 		MatchCasePattern,
-		MatchDefault
+		MatchDefault,
+		DeferBody
 	};
 
 	

@@ -3,6 +3,8 @@
 
 #include <chrono>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "stringUtils.hpp"
 #include "types.hpp"
@@ -35,6 +37,10 @@ namespace IkigaiScript {
 		std::vector<Module> modules;
 		std::vector<Module> optionalModules;
 		ScopePtr globalScope = std::make_shared<Scope>(this);
+
+		std::unordered_map<std::string, size_t> moduleIndexByName;
+		std::unordered_map<std::string, size_t> moduleIndexByPath;
+		std::vector<std::string> moduleLoadStack;
 		
 		ValuePtr listIndexFunctionVarLocation;
 		ValuePtr identityFunctionVarLocation;
@@ -54,7 +60,7 @@ namespace IkigaiScript {
 		ExpressionPtr parseInterpolatedString(std::string val, ScopePtr scope, Class* classs);
 
 		ScopePtr newClassScope(const std::string& name, ScopePtr scope);
-		void closeScope(ScopePtr& scope);
+		void closeScope(ScopePtr& scope, bool runDeferred = true);
 		FunctionRef newFunction(const std::string& name, ScopePtr scope, FunctionRef func);
 		FunctionRef newFunction(const std::string& name, ScopePtr scope, 
 			const std::vector<std::string>& argNames,
@@ -92,6 +98,12 @@ namespace IkigaiScript {
 		FunctionRef newFunction(const std::string& name, const ScopedLambda& lam) { return newFunction(name, globalScope, lam); }
 		FunctionRef newFunction(const std::string& name, ScopePtr scope, const ClassLambda& lam) { return newFunction(name, scope, make_shared<Function>(name, lam)); }
 		ScopePtr newModule(const std::string& name, ModulePrivilegeFlags flags, const std::unordered_map<std::string, Lambda>& functions);
+		Module& loadScriptModule(const std::string& path, const std::string& importerPath = "");
+		Module* findModuleByName(const std::string& name);
+		bool isExported(const Module& mod, const std::string& symbol);
+		void bindImportedSymbol(ScopePtr scope, const Module& mod, const std::string& name, const std::string& alias = "");
+		void registerModuleName(const std::string& name, size_t index);
+		void registerExport(ScopePtr scope, const std::string& name);
 		ValuePtr callFunction(const std::string& name, ScopePtr scope, const List& args);
 		ValuePtr callCoro(CoroRef coro);
 		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs = nullptr);
@@ -129,6 +141,10 @@ namespace IkigaiScript {
 		FunctionRef resolveOperator(const std::string& name, ScopePtr scope, const List& args);
 		ScopePtr resolveScope(const std::string& name, ScopePtr scope);
 		TypeDescriptor checkTypeInScope(const std::string& name, ScopePtr scope);
+
+		void registerDefer(ScopePtr scope, ExpressionPtr body);
+		void runDefers(ScopePtr scope, Class* classs, size_t fromIndex = 0);
+		void executeDeferBody(ExpressionPtr body, ScopePtr scope, Class* classs);
 
 		ValuePtr resolveVariable(const std::string& name) { return resolveVariable(name, globalScope); }
 		FunctionRef resolveFunction(const std::string& name) { return resolveFunction(name, globalScope); }

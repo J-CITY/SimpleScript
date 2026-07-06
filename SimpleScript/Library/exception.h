@@ -9,10 +9,11 @@ namespace IkigaiScript {
 	enum class ExceptionType {
 		None,
 		TypeConvert,
+		Unknown,
 	};
 
 	struct Exception: public std::exception {
-		ExceptionType type;
+		ExceptionType type = ExceptionType::Unknown;
 		std::string errStr;
 		Exception(std::string errStr): errStr(std::move(errStr)) {}
 	};

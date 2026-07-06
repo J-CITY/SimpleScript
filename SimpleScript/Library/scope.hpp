@@ -28,6 +28,7 @@ namespace IkigaiScript {
 
         std::unordered_map<std::string, ScopePtr> coroScopes;
         std::vector<std::string> baseClasses;
+        std::vector<ExpressionPtr> deferred;
 
         ValuePtr& insertVar(const std::string& n, ValuePtr val);
         ScopePtr insertScope(ScopePtr val);
