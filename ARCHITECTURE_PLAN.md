@@ -46,9 +46,6 @@
 3. **Visual Editor**: Адаптируем `VisualNodes.cpp`, создаем Арену внутри редактора нод.
 -----------------------------------
 
-- result
-
-- transaction
 - live переменные
 - concurrency
 
