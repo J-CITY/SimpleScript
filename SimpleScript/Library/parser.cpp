@@ -377,6 +377,63 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				root = newExpr;
 			}
 		}
+		else if (strings[i] == ">>>") {
+			if (i + 1 < strings.size() && strings[i + 1] == "{") {
+				i++; // move to "{"
+				int nestLayers = 1;
+				std::vector<std::string_view> minisub;
+				while (nestLayers > 0 && ++i < strings.size()) {
+					if (strings[i] == "{") nestLayers++;
+					else if (strings[i] == "}") nestLayers--;
+					if (nestLayers > 0) minisub.push_back(strings[i]);
+				}
+				
+				auto safeBlockExpr = interpreter->arena.make<SafeBlockExpression>();
+				
+				auto oldParseScope = parseScope;
+				auto oldCurrentExpr = currentExpression;
+				auto oldParseState = parseState;
+				auto oldParseStrings = parseStrings;
+				
+				parseScope = interpreter->newScope("__anon"s, scope);
+				currentExpression = safeBlockExpr;
+				clearParseStacks();
+				
+				bool hasReturn = false;
+				for (auto& tok : minisub) {
+					if (tok == "return") hasReturn = true;
+					parse(tok);
+				}
+				if (!parseStrings.empty() || parseState != ParseState::BeginExpression) {
+					parse(";");
+				}
+				
+				safeBlockExpr->producesValue = hasReturn;
+				if (!safeBlockExpr->subexpressions.empty()) {
+					auto lastType = safeBlockExpr->subexpressions.back()->type;
+					if (lastType != ExpressionType::DefineVar && lastType != ExpressionType::Return && lastType != ExpressionType::Defer) {
+						safeBlockExpr->producesValue = true;
+					}
+				}
+				
+				interpreter->closeScope(parseScope, false);
+				
+				parseScope = oldParseScope;
+				currentExpression = oldCurrentExpr;
+				parseState = oldParseState;
+				parseStrings = oldParseStrings;
+				
+				auto newExpr = safeBlockExpr;
+				if (root) {
+					static_cast<FunctionExpression*>(root)->subexpressions.push_back(newExpr);
+				}
+				else {
+					root = newExpr;
+				}
+			} else {
+				throw Exception("Expected '{' after '>>>'");
+			}
+		}
 		else if (strings[i] == "{") {
 			int nestLayers = 1;
 			std::vector<std::string_view> minisub;
@@ -1104,6 +1161,17 @@ void Parser::parse(std::string_view token) {
 				currentExpression = interpreter->arena.make<DeferExpression>();
 			}
 		}
+		else if (token == ">>>") {
+			parseState = ParseState::SafeBlock;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<SafeBlockExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<SafeBlockExpression>();
+			}
+		}
 		else if (token == ";") {
 			if (currentExpression) {
 			} else {
@@ -1534,6 +1602,16 @@ void Parser::parse(std::string_view token) {
 		}
 		else {
 			throw Exception("Expected '{' after 'defer'");
+		}
+		break;
+	case ParseState::SafeBlock:
+		if (token == "{") {
+			parseState = ParseState::BeginExpression;
+			parseScope = interpreter->newScope("__anon"s, parseScope);
+			clearParseStacks();
+		}
+		else {
+			throw Exception("Expected '{' after '>>>'");
 		}
 		break;
 	case ParseState::Decorator:
@@ -2268,6 +2346,22 @@ void Parser::clearParseStacks() {
 bool Parser::closeCurrentExpression() {
 	if (currentExpression) {
 		previousExpression = currentExpression;
+		if (currentExpression->type == ExpressionType::SafeBlock) {
+			auto sblock = static_cast<SafeBlockExpression*>(currentExpression);
+			bool hasReturn = false;
+			for (auto& expr : sblock->subexpressions) {
+				if (expr->type == ExpressionType::Return) {
+					hasReturn = true;
+				}
+			}
+			sblock->producesValue = hasReturn;
+			if (!sblock->subexpressions.empty()) {
+				auto lastType = sblock->subexpressions.back()->type;
+				if (lastType != ExpressionType::DefineVar && lastType != ExpressionType::Return && lastType != ExpressionType::Defer) {
+					sblock->producesValue = true;
+				}
+			}
+		}
 		if (currentExpression->parent) {
 			currentExpression = currentExpression->parent;
 		}

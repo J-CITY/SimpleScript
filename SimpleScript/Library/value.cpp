@@ -108,6 +108,15 @@ namespace IkigaiScript {
                     *this = Value(getCoro()->func->name);
                     //throw Exception("Conversion not defined for types `"s + getTypeName(getType()) + "` to `" + getTypeName(newType) + "`");
                     break;
+                case Type::Optional:
+                {
+                    if (value.asOptional) {
+                        *this = Value("some(" + value.asOptional->getPrintString() + ")");
+                    } else {
+                        *this = Value("empty");
+                    }
+                    break;
+                }
                 }
                 break;
             case Type::Array:
@@ -392,6 +401,15 @@ namespace IkigaiScript {
                     std::string s;
                     utf8Encode(getChar(), s);
                     *this = Value(s);
+                    break;
+                }
+                case Type::Optional:
+                {
+                    if (value.asOptional) {
+                        *this = Value("some(" + value.asOptional->getPrintString() + ")");
+                    } else {
+                        *this = Value("empty");
+                    }
                     break;
                 }
                 case Type::Array:

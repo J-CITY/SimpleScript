@@ -1244,6 +1244,28 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 							return std::make_shared<Value>();
 							}},
 
+						{"optionalHas", [](const List& args) {
+							if (args.empty() || args[0]->getType() != Type::Optional) {
+								return std::make_shared<Value>(false);
+							}
+							return std::make_shared<Value>(args[0]->getOptional() != nullptr);
+							}},
+
+						{"optionalGet", [](const List& args) {
+							if (args.empty() || args[0]->getType() != Type::Optional) {
+								throw Exception("optionalGet expected an Optional value");
+							}
+							auto inner = args[0]->getOptional();
+							if (!inner) {
+								throw Exception("Attempt to get value from empty Optional");
+							}
+							return inner;
+							}},
+
+						{"optionalEmpty", [](const List& args) {
+							return std::make_shared<Value>(Value::makeOptional(nullptr));
+							}},
+
 						{"getline", [](const List& args) {
 							std::string s;
 							// blocking calls are fine
@@ -2378,6 +2400,99 @@ ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, Clas
 	return resolveVariable(name, scope);
 }
 
+ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& name, ScopePtr scope) {
+	if (name == "super") {
+		static ValuePtr superVal = std::make_shared<Value>("super");
+		return superVal;
+	}
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->variables.find(name);
+		if (iter != scope->variables.end()) {
+			if (initialScope != scope) {
+				auto s = initialScope;
+				while (s && s != scope) {
+					if (s->isTransactionScope) {
+						s->variables[name] = std::make_shared<Value>(*iter->second);
+						return s->variables[name];
+					}
+					s = s->parent;
+				}
+			}
+			return iter->second;
+		}
+		else {
+			scope = scope->parent;
+		}
+	}
+	for (auto m : modules) {
+		auto iter = m.scope->variables.find(name);
+		if (iter != m.scope->variables.end()) {
+			auto s = initialScope;
+			while (s) {
+				if (s->isTransactionScope) {
+					s->variables[name] = std::make_shared<Value>(*iter->second);
+					return s->variables[name];
+				}
+				s = s->parent;
+			}
+			return iter->second;
+		}
+	}
+	auto s = initialScope;
+	while (s) {
+		if (s->isTransactionScope) {
+			return s->insertVar(name, std::make_shared<Value>());
+		}
+		s = s->parent;
+	}
+	return initialScope->insertVar(name, std::make_shared<Value>());
+}
+
+ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& name, Class* classs, ScopePtr scope) {
+	if (classs) {
+		auto iter = classs->variables.find(name);
+		if (iter != classs->variables.end()) {
+			return iter->second;
+		}
+	}
+	return resolveVariableForWrite(name, scope);
+}
+
+void IkigaiScriptInterpreter::commitTransaction(ScopePtr txScope) {
+	if (!txScope) return;
+	for (auto& [name, val] : txScope->variables) {
+		auto parentScope = txScope->parent;
+		bool found = false;
+		while (parentScope) {
+			auto iter = parentScope->variables.find(name);
+			if (iter != parentScope->variables.end()) {
+				*iter->second = *val;
+				iter->second->typeDescriptor = val->typeDescriptor;
+				found = true;
+				break;
+			}
+			parentScope = parentScope->parent;
+		}
+		if (!found) {
+			for (auto m : modules) {
+				auto iter = m.scope->variables.find(name);
+				if (iter != m.scope->variables.end()) {
+					*iter->second = *val;
+					iter->second->typeDescriptor = val->typeDescriptor;
+					found = true;
+					break;
+				}
+			}
+		}
+	}
+}
+
+void IkigaiScriptInterpreter::rollbackTransaction(ScopePtr txScope) {
+	if (!txScope) return;
+	txScope->variables.clear();
+}
+
 FunctionRef IkigaiScriptInterpreter::resolveFunction(const std::string& name, Class* classs, ScopePtr scope) {
 	if (classs) {
 		auto iter = classs->functionScope->functions.find(name);
@@ -2822,12 +2937,37 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			}
 		}
 
+		bool isAssignment = false;
+		{
+			std::string opName;
+			if (funcExpr->function->getType() == Type::Function) {
+				auto fnc = funcExpr->function->getFunction();
+				if (fnc) opName = fnc->name;
+			} else if (funcExpr->function->getType() == Type::String) {
+				opName = funcExpr->function->getString();
+			}
+			if (opName == "=") {
+				isAssignment = true;
+			}
+		}
+
+		size_t argIdx = 0;
 		for (auto&& sub : funcExpr->subexpressions) {
 			if (sub->type == ExpressionType::NamedArgument) {
 				auto namedArg = static_cast<NamedArgumentExpression*>(sub);
 				namedArgs[namedArg->name] = getValue(namedArg->expression, scope, classs);
 			} else {
-				args.push_back(getValue(sub, scope, classs));
+				if (isAssignment && argIdx == 0) {
+					if (sub->type == ExpressionType::ResolveVar) {
+						auto rvar = static_cast<ResolveVar*>(sub);
+						args.push_back(resolveVariableForWrite(rvar->name, classs, scope));
+					} else {
+						args.push_back(getValue(sub, scope, classs));
+					}
+				} else {
+					args.push_back(getValue(sub, scope, classs));
+				}
+				argIdx++;
 			}
 		}
 
@@ -3179,6 +3319,61 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	{
 		registerDefer(scope, exp);
 		return arena.make<ValueNode>(std::make_shared<Value>());
+	}
+	break;
+	case ExpressionType::SafeBlock:
+	{
+		auto sblock = static_cast<SafeBlockExpression*>(exp);
+		auto txScope = std::make_shared<Scope>("__tx", scope);
+		txScope->isTransactionScope = true;
+		
+		ValuePtr resultValue;
+		bool success = false;
+		BlockResult r;
+		try {
+			insertScope(txScope, scope);
+			r = needsToReturn(sblock->subexpressions, txScope, classs);
+			runDefers(txScope, classs);
+			commitTransaction(txScope);
+			closeScope(txScope, false);
+			success = true;
+		}
+		catch (const Exception& e) {
+			rollbackTransaction(txScope);
+			closeScope(txScope, false);
+			success = false;
+		}
+		catch (const std::exception& e) {
+			rollbackTransaction(txScope);
+			closeScope(txScope, false);
+			success = false;
+		}
+		catch (...) {
+			rollbackTransaction(txScope);
+			closeScope(txScope, false);
+			success = false;
+		}
+
+		if (sblock->producesValue) {
+			if (success) {
+				ValuePtr innerVal = nullptr;
+				if (r.explicitReturn) {
+					innerVal = r.explicitReturn;
+				} else if (r.lastValue) {
+					innerVal = r.lastValue;
+				} else {
+					innerVal = std::make_shared<Value>();
+				}
+				// Copy output to preserve return safety
+				resultValue = std::make_shared<Value>(Value::makeOptional(std::make_shared<Value>(*innerVal)));
+			} else {
+				resultValue = std::make_shared<Value>(Value::makeOptional(nullptr));
+			}
+		} else {
+			resultValue = std::make_shared<Value>(success);
+		}
+
+		return arena.make<ValueNode>(resultValue);
 	}
 	break;
 	case ExpressionType::Block:

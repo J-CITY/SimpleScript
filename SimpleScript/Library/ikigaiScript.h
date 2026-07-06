@@ -135,6 +135,10 @@ namespace IkigaiScript {
 
 		ValuePtr& resolveVariable(const std::string& name, Class* classs, ScopePtr scope);
 		ValuePtr& resolveVariable(const std::string& name, ScopePtr scope);
+		ValuePtr& resolveVariableForWrite(const std::string& name, Class* classs, ScopePtr scope);
+		ValuePtr& resolveVariableForWrite(const std::string& name, ScopePtr scope);
+		void commitTransaction(ScopePtr txScope);
+		void rollbackTransaction(ScopePtr txScope);
 		FunctionRef resolveFunction(const std::string& name, Class* classs, ScopePtr scope);
 		FunctionRef resolveFunction(const std::string& name, ScopePtr scope);
 		bool checkTypesInFunction(FunctionRef func, const List& args);

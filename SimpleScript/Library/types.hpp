@@ -61,6 +61,8 @@ namespace IkigaiScript {
 			return "range";
 		case Type::Tuple:
 			return "tuple";
+		case Type::Optional:
+			return "Optional";
 		default:
 			return "unknown";
 		}

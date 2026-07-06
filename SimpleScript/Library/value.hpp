@@ -26,6 +26,7 @@ namespace IkigaiScript {
             DictionaryRef asDictionary;
             ClassRef asClass;
             RangeValue asRange;
+            ValuePtr asOptional;
 
             Payload() {}
             ~Payload() {}
@@ -42,6 +43,7 @@ namespace IkigaiScript {
             case Type::Set: value.asSet.~shared_ptr(); break;
             case Type::Map: value.asDictionary.~shared_ptr(); break;
             case Type::Class: value.asClass.~shared_ptr(); break;
+            case Type::Optional: value.asOptional.~shared_ptr(); break;
             default: break;
             }
         }
@@ -65,6 +67,7 @@ namespace IkigaiScript {
             case Type::Class: new (&value.asClass) ClassRef(o.value.asClass); break;
             case Type::Tuple: new (&value.asList) List(o.value.asList); break;
             case Type::Range: new (&value.asRange) RangeValue(o.value.asRange); break;
+            case Type::Optional: new (&value.asOptional) ValuePtr(o.value.asOptional); break;
             default: break;
             }
         }
@@ -88,6 +91,7 @@ namespace IkigaiScript {
             case Type::Class: new (&value.asClass) ClassRef(std::move(o.value.asClass)); break;
             case Type::Tuple: new (&value.asList) List(std::move(o.value.asList)); break;
             case Type::Range: new (&value.asRange) RangeValue(std::move(o.value.asRange)); break;
+            case Type::Optional: new (&value.asOptional) ValuePtr(std::move(o.value.asOptional)); break;
             default: break;
             }
         }
@@ -117,6 +121,26 @@ namespace IkigaiScript {
             v.typeDescriptor = TypeDescriptor{ Type::Tuple, true, false, true, false };
             new (&v.value.asList) List(std::move(items));
             return v;
+        }
+
+        static Value makeOptional(ValuePtr val, std::shared_ptr<TypeDescriptor> subtype = nullptr) {
+            Value v;
+            v.destroy();
+            v.typeDescriptor = TypeDescriptor{ Type::Optional, true, false, true, false };
+            if (subtype) {
+                v.typeDescriptor.subtype = subtype;
+            } else if (val) {
+                v.typeDescriptor.subtype = std::make_shared<TypeDescriptor>(val->typeDescriptor);
+            } else {
+                v.typeDescriptor.subtype = std::make_shared<TypeDescriptor>(TypeDescriptor{ Type::Null, true, true, true, false });
+            }
+            new (&v.value.asOptional) ValuePtr(val);
+            return v;
+        }
+
+        ValuePtr getOptional() const {
+            if (getType() != Type::Optional) throw Exception("Value is not an Optional");
+            return value.asOptional;
         }
 
         Value(const Value& o) { copyFrom(o); }

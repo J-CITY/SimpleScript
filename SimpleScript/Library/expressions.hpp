@@ -11,6 +11,7 @@ namespace IkigaiScript {
 	struct MemberFunctionCall;
 	struct FunctionExpression;
 	struct BlockExpression;
+	struct SafeBlockExpression;
 	struct DefineVar;
 	struct ResolveVar;
 	struct Foreach;
@@ -737,5 +738,32 @@ namespace IkigaiScript {
 
 		DestructuringAssign(std::vector<std::string> names, ExpressionPtr valExpr, ExpressionPtr par = nullptr)
 			: Expression(ExpressionType::DestructuringAssign, par), patternNames(std::move(names)), valueExpression(valExpr) {}
+	};
+
+	struct SafeBlockExpression : public Expression {
+		std::vector<ExpressionPtr> subexpressions;
+		bool producesValue = false;
+
+		SafeBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::SafeBlock, par) {}
+
+		ExpressionPtr back() override {
+			return subexpressions.back();
+		}
+
+		std::vector<ExpressionPtr>::iterator begin() override {
+			return subexpressions.begin();
+		}
+
+		std::vector<ExpressionPtr>::iterator end() override {
+			return subexpressions.end();
+		}
+
+		void push_back(ExpressionPtr ref) override {
+			subexpressions.push_back(ref);
+		}
+
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
+		}
 	};
 }

@@ -72,7 +72,8 @@ namespace IkigaiScript
 		Class,
 		Generic,
 		Range,
-		Tuple
+		Tuple,
+		Optional
 	};
 
 	enum class LoopInterupt {
@@ -100,7 +101,8 @@ namespace IkigaiScript
 		Match,
 		TupleLiteral,
 		DestructuringAssign,
-		Defer
+		Defer,
+		SafeBlock
 	};
 
 	enum class ParseState : uint8_t {
@@ -135,7 +137,8 @@ namespace IkigaiScript
 		MatchCall,
 		MatchCasePattern,
 		MatchDefault,
-		DeferBody
+		DeferBody,
+		SafeBlock
 	};
 
 	

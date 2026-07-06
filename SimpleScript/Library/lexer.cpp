@@ -151,7 +151,12 @@ std::vector<std::string_view> Lexer::Tokenize(std::string_view input) {
 					lpos = pos;
 					continue;
 				}
-				++stride;
+				else if (input[pos] == '>' && pos + 2 < input.size() && input[pos + 1] == '>' && input[pos + 2] == '>') {
+					stride = 3;
+				}
+				else {
+					++stride;
+				}
 			}
 			ret.push_back(input.substr(lpos, stride));
 			lpos += stride;
