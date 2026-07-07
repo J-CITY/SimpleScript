@@ -3,15 +3,6 @@
 
 namespace IkigaiScript {
 
-// Abstract base visitor over all AST expression types.
-// Implement the visit() overloads you care about; the default does nothing
-// so you can selectively override only the nodes relevant to your pass.
-//
-// Usage (bytecode compiler, static analysis, etc.):
-//   struct MyPass : AstVisitor {
-//       void visit(FunctionExpression& n) override { ... }
-//   };
-//   node->accept(myPass);
 struct AstVisitor {
     virtual ~AstVisitor() = default;
 
@@ -43,8 +34,6 @@ struct AstVisitor {
     virtual void visit(BranchBlockExpression& n) { visit(static_cast<Expression&>(n)); }
     virtual void visit(SafeBlockExpression& n)   { visit(static_cast<Expression&>(n)); }
 
-    // Helper: recursively visit all children of any expression.
-    // Concrete nodes call this in their accept() if needed.
     void visitChildren(Expression& node) {
         for (auto it = node.begin(); it != node.end(); ++it) {
             if (*it) (*it)->accept(*this);

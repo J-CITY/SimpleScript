@@ -2,14 +2,8 @@
 
 namespace IkigaiScript {
 
-// ---------------------------------------------------------------------------
-// Expression base — dispatches by dynamic type (fallback for unknown nodes)
-// ---------------------------------------------------------------------------
 void Expression::accept(AstVisitor& v) { v.visit(*this); }
 
-// ---------------------------------------------------------------------------
-// Concrete node accept() implementations — each calls the specific overload
-// ---------------------------------------------------------------------------
 void FunctionExpression::accept(AstVisitor& v)    { v.visit(*this); }
 void MemberVariable::accept(AstVisitor& v)        { v.visit(*this); }
 void MemberFunctionCall::accept(AstVisitor& v)    { v.visit(*this); }

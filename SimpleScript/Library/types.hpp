@@ -18,7 +18,6 @@
 #include "bytecode/bytecode_fwd.hpp"
 
 namespace IkigaiScript {
-
     using namespace std::string_literals;
 #ifdef IS_32_BIT
     using Int = int;
@@ -95,8 +94,6 @@ namespace IkigaiScript {
 	struct Function;
 	using FunctionRef = std::shared_ptr<Function>;
 
-    // Coro/CoroRef are now defined in concurrency/task.hpp (Task/TaskRef aliases)
-	
 	struct Array {
         Type type;
         union Payload {
@@ -288,10 +285,8 @@ namespace IkigaiScript {
         std::vector<std::string> baseClasses;
 
         Class(const std::string& name_) : name(name_) {}
-        Class(const std::string& name_, const std::unordered_map<std::string, ValuePtr>& variables_) : name(name_), variables(variables_)
-        {
-            int a = 0;
-        }
+        Class(const std::string& name_, const std::unordered_map<std::string, ValuePtr>& variables_): 
+            name(name_), variables(variables_) {}
         Class(const Class& o);
         Class(const ScopePtr& o);
         ~Class();
@@ -439,8 +434,4 @@ namespace IkigaiScript {
 		Function() : name("__anon") {}
         Function(const Function& o) = default;
 	};
-
-
-    // Task (was Coro) is now in concurrency/task.hpp
-    // Backward-compat: Coro = Task, CoroRef = TaskRef (defined in task.hpp)
 }

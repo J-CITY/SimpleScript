@@ -20,10 +20,6 @@ using ScopePtr = std::shared_ptr<Scope>;
 
 struct Class;
 
-// ---------------------------------------------------------------------------
-// TaskState
-// ---------------------------------------------------------------------------
-
 enum class TaskState : uint8_t {
     Created,    // constructed, not yet started
     Running,    // currently inside callTask
@@ -42,10 +38,6 @@ inline const char* taskStateName(TaskState s) {
     }
     return "Unknown";
 }
-
-// ---------------------------------------------------------------------------
-// Task — evolution of Coro with scheduler integration
-// ---------------------------------------------------------------------------
 
 struct Task : std::enable_shared_from_this<Task> {
     // Identity
@@ -73,12 +65,8 @@ struct Task : std::enable_shared_from_this<Task> {
 
     // Cancellation
     CancellationToken::Ptr token;
-
-    // Phase 5: set to true for tasks backed by NativeJobPool workers.
-    // callTask() skips native tasks — the pool completes them off-thread.
     bool isNativeJob = false;
 
-    // Backward-compat: isActive maps onto state
     bool isActive() const noexcept {
         return state == TaskState::Created ||
                state == TaskState::Running ||
@@ -90,10 +78,6 @@ struct Task : std::enable_shared_from_this<Task> {
 };
 
 using TaskRef = std::shared_ptr<Task>;
-
-// ---------------------------------------------------------------------------
-// Coro — backward-compatible alias kept until Phase 3 removes it
-// ---------------------------------------------------------------------------
 
 using Coro = Task;
 using CoroRef = TaskRef;

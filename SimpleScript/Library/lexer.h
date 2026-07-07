@@ -32,9 +32,7 @@ namespace IkigaiScript {
 		"true", "false", "import",
 		"match", "case", "default", "dynamic",
 		"module", "export", "using", "from", "as", "defer", "live",
-		// Phase 2: cooperative async
 		"await", "spawn",
-		// Phase 3: structured concurrency
 		"sync", "race", "branch",
 	};
 

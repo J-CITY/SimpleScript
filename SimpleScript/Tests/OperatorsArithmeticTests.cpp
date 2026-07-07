@@ -217,6 +217,34 @@ TEST_CASE("prefix decrement returns decremented value", "[operators.arithmetic]"
     REQUIRE(getVarInt(interp, "a") == 4);
 }
 
+TEST_CASE("prefix ++ as expression yields new value", "[operators.arithmetic]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a = 5; var b = ++a;");
+    REQUIRE(getVarInt(interp, "a") == 6);
+    REQUIRE(getVarInt(interp, "b") == 6);
+}
+
+TEST_CASE("postfix ++ as expression yields old value", "[operators.arithmetic]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a = 5; var b = a++;");
+    REQUIRE(getVarInt(interp, "a") == 6);
+    REQUIRE(getVarInt(interp, "b") == 5);
+}
+
+TEST_CASE("prefix -- as expression yields new value", "[operators.arithmetic]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a = 5; var b = --a;");
+    REQUIRE(getVarInt(interp, "a") == 4);
+    REQUIRE(getVarInt(interp, "b") == 4);
+}
+
+TEST_CASE("postfix -- as expression yields old value", "[operators.arithmetic]") {
+    auto interp = makeInterp();
+    interp.evaluate("var a = 5; var b = a--;");
+    REQUIRE(getVarInt(interp, "a") == 4);
+    REQUIRE(getVarInt(interp, "b") == 5);
+}
+
 TEST_CASE("compound assign *=", "[operators.arithmetic]") {
     auto interp = makeInterp();
     interp.evaluate("var a = 3; a *= 4;");

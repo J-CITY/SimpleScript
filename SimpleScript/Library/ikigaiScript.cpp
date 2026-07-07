@@ -12,28 +12,29 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <chrono>
 
 #include "exception.h"
 #include "expressions.hpp"
 #include "lexer.h"
 #include "utf8Utils.hpp"
 #include "concurrency/cancellation.hpp"
-
-using namespace IkigaiScript;
+#include "bytecode/serializer.hpp"
 
 namespace IkigaiScript {
 
 bool isContainer(Type type) {
 	const static std::set<Type> containers = { Type::Array, Type::List, Type::Set, Type::Map, Type::Result };
 	return containers.contains(type);
-};
+}
 
 bool checkNext(const std::vector<std::string_view>& vec, std::string_view expect) {
 	if (!vec.empty() && vec.front() == expect) {
 		return true;
 	}
 	return false;
-};
+}
+
 bool expectNext(std::vector<std::string_view>& vec, std::string_view expect) {
 	if (!vec.empty() && vec.front() == expect) {
 		vec.erase(vec.begin());
@@ -107,8 +108,6 @@ bool checkConvertTypes(const TypeDescriptor& t1, const TypeDescriptor& t2, Ikiga
 	return res;
 }
 
-
-
 // functions for figuring out the type of token
 
 bool isStringLiteral(std::string_view token) {
@@ -178,8 +177,6 @@ bool isOpeningBracketOrParen(std::string_view test) {
 bool isClosingBracketOrParen(std::string_view test) {
 	return (test.size() == 1 && (test[0] == ']' || test[0] == ')'));
 }
-
-} // namespace IkigaiScript
 
 void IkigaiScriptInterpreter::createOptionalModules() {
 	newModule("file", ModulePrivilege::fileSystemRead | ModulePrivilege::fileSystemWrite, {
@@ -262,9 +259,8 @@ ScopePtr IkigaiScriptInterpreter::newModule(const std::string& name, ModulePrivi
 	return modSource.back().scope;
 }
 
-namespace fs = std::filesystem;
-
 static std::string resolvePath(const std::string& path, const std::string& importerPath) {
+	namespace fs = std::filesystem;
 	try {
 		fs::path p(path);
 		if (p.is_absolute()) {
@@ -333,6 +329,7 @@ struct ParserStateSaver {
 };
 
 Module& IkigaiScriptInterpreter::loadScriptModule(const std::string& path, const std::string& importerPath) {
+	namespace fs = std::filesystem;
 	ParserStateSaver saver(parser);
 	std::string normPath = resolvePath(path, importerPath);
 
@@ -533,13 +530,6 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			if (args.size() == 0) {
 				return resolveVariable("=");
 			}
-			//if (args[0]->typeDescriptor.isConst && args[0]->typeDescriptor.isInit) {
-			//	throw Exception("Try assign to const value");
-			//}
-			//TODO:
-			//if (!args[0]->typeDescriptor.isNullable && args[1]->typeDescriptor.type == Type::Null) {
-			//	throw Exception("Can not assign null to variable");
-			//}
 			if (!args[1]->typeDescriptor.isInit) {
 				throw Exception("Use not init variable in expression");
 			}
@@ -693,9 +683,10 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			if (args.size() == 0) {
 				return std::make_shared<Value>();
 			}
-			if (args.size() > 1) {
-				throw Exception("Must have 0 or 1 arguments");
+			if (args.size() > 2) {
+				throw Exception("Must have 0, 1 or 2 arguments");
 			}
+			// 2 args = prefix (leading placeholder + operand), 1 arg = postfix
 			auto i = args.size() - 1;
 			if (i) {
 				// prefix
@@ -714,9 +705,10 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			if (args.size() == 0) {
 				return std::make_shared<Value>();
 			}
-			if (args.size() > 1) {
-				throw Exception("Must have 0 or 1 arguments");
+			if (args.size() > 2) {
+				throw Exception("Must have 0, 1 or 2 arguments");
 			}
+			// 2 args = prefix (leading placeholder + operand), 1 arg = postfix
 			auto i = args.size() - 1;
 			if (i) {
 				// prefix
@@ -1058,24 +1050,6 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 					return std::make_shared<Value>(val);
 				}},
 
-			//{"vec3", [](const List& args) {
-			//	if (args.size() == 0) {
-			//		return std::make_shared<Value>(vec3());
-			//	}
-			//	if (args.size() < 3) {
-			//		auto val = *args[0];
-			//		val.hardconvert(Type::Float);
-			//		return std::make_shared<Value>(vec3((float)val.getFloat()));
-			//	}
-			//	auto x = *args[0];
-			//	x.hardconvert(Type::Float);
-			//	auto y = *args[1];
-			//	y.hardconvert(Type::Float);
-			//	auto z = *args[2];
-			//	z.hardconvert(Type::Float);
-			//	return std::make_shared<Value>(vec3((float)x.getFloat(), (float)y.getFloat(), (float)z.getFloat()));
-			//	 }},
-
 			{"string", [](const List& args) {
 					if (args.size() == 0) {
 						return std::make_shared<Value>(""s);
@@ -1154,7 +1128,6 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 					val.hardconvert(Type::List);
 					return std::make_shared<Value>(val);
 				}},
-
 					// overal stdlib
 						{"typeof", [](List args) {
 							if (args.size() == 0) {
@@ -1485,16 +1458,6 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 													return std::make_shared<Value>((Int)(iter - arry.begin()));
 												}
 												break;
-												//case Type::Vec3:
-												//{
-												//	auto& arry = args[0]->getStdVector<vec3>();
-												//	auto iter = find(arry.begin(), arry.end(), args[1]->getVec3());
-												//	if (iter == arry.end()) {
-												//		return std::make_shared<Value>();
-												//	}
-												//	return std::make_shared<Value>((Int)(iter - arry.begin()));
-												//}
-												break;
 												case Type::String:
 												{
 													auto& arry = args[0]->getStdVector<std::string>();
@@ -1543,22 +1506,20 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 											case Type::Float:
 												args[0]->getStdVector<Float>().erase(args[0]->getStdVector<Float>().begin() + args[1]->getInt());
 												break;
-												//case Type::Vec3:
-												//	args[0]->getStdVector<vec3>().erase(args[0]->getStdVector<vec3>().begin() + args[1]->getInt());
-												//	break;
-												case Type::String:
-													args[0]->getStdVector<std::string>().erase(args[0]->getStdVector<std::string>().begin() + args[1]->getInt());
-													break;
-												case Type::Function:
-													args[0]->getStdVector<FunctionRef>().erase(args[0]->getStdVector<FunctionRef>().begin() + args[1]->getInt());
-													break;
-												default:
-													break;
-												}
+											case Type::String:
+												args[0]->getStdVector<std::string>().erase(args[0]->getStdVector<std::string>().begin() + args[1]->getInt());
+												break;
+											case Type::Function:
+												args[0]->getStdVector<FunctionRef>().erase(args[0]->getStdVector<FunctionRef>().begin() + args[1]->getInt());
+												break;
+											default:
+												break;
 											}
+										}
 										else if (args[0]->getType() == Type::Array) {
 											args[0]->getDictionary()->erase(args[1]->getHash());
-										} else  {
+										}
+										else  {
 											args[0]->getList().erase(args[0]->getList().begin() + args[1]->getInt());
 										}
 											return std::make_shared<Value>();
@@ -1578,18 +1539,15 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 								  case Type::Float:
 									  args[0]->getStdVector<Float>().push_back(args[1]->getFloat());
 									  break;
-									  //case Type::Vec3:
-									  //	args[0]->getStdVector<vec3>().push_back(args[1]->getVec3());
-									  //	break;
-									  case Type::String:
-										  args[0]->getStdVector<std::string>().push_back(args[1]->getString());
-										  break;
-									  case Type::Function:
-										  args[0]->getStdVector<FunctionRef>().push_back(args[1]->getFunction());
-										  break;
-									  default:
-										  break;
-									  }
+									case Type::String:
+										args[0]->getStdVector<std::string>().push_back(args[1]->getString());
+										break;
+									case Type::Function:
+										args[0]->getStdVector<FunctionRef>().push_back(args[1]->getFunction());
+										break;
+									default:
+										break;
+									}
 								  }
 							  }
 			   else {
@@ -1629,12 +1587,6 @@ return std::make_shared<Value>();
 			arry.erase(arry.begin());
 		}
 		break;
-		//case Type::Vec3:
-		//{
-		//	auto& arry = args[0]->getStdVector<vec3>();
-		//	arry.erase(arry.begin());
-		//}
-		break;
 		case Type::Function:
 		{
 			auto& arry = args[0]->getStdVector<FunctionRef>();
@@ -1670,8 +1622,6 @@ return std::make_shared<Value>();
 			return std::make_shared<Value>(args[0]->getStdVector<Int>().front());
 		case Type::Float:
 			return std::make_shared<Value>(args[0]->getStdVector<Float>().front());
-			//case Type::Vec3:
-			//   return std::make_shared<Value>(args[0]->getStdVector<vec3>().front());
 			case Type::Function:
 				return std::make_shared<Value>(args[0]->getStdVector<FunctionRef>().front());
 			case Type::String:
@@ -1696,8 +1646,6 @@ else {
 			return std::make_shared<Value>(args[0]->getStdVector<Int>().back());
 		case Type::Float:
 			return std::make_shared<Value>(args[0]->getStdVector<Float>().back());
-			//case Type::Vec3:
-			//	return std::make_shared<Value>(args[0]->getStdVector<vec3>().back());
 			case Type::Function:
 				return std::make_shared<Value>(args[0]->getStdVector<FunctionRef>().back());
 			case Type::String:
@@ -1737,13 +1685,6 @@ else if (args[0]->getType() == Type::Array) {
 	 return copy;
  }
 	 break;
-	 //case Type::Vec3:
-	 //{
-	 //	auto& vl = copy->getStdVector<vec3>();
-	 //	std::reverse(vl.begin(), vl.end());
-	 //	return copy;
-	 //}
-	 //	break;
 	 case Type::String:
 	 {
 		 auto& vl = copy->getStdVector<std::string>();
@@ -1834,9 +1775,6 @@ else if (args[0]->getType() == Type::Array) {
 	 case Type::Float:
 		 return std::make_shared<Value>(Array(std::vector<Float>(args[0]->getStdVector<Float>().begin() + intdexA, args[0]->getStdVector<Float>().begin() + intdexB)));
 		 break;
-		 //case Type::Vec3:
-		 //	return std::make_shared<Value>(Array(vector<vec3>(args[0]->getStdVector<vec3>().begin() + intdexA, args[0]->getStdVector<vec3>().begin() + intdexB)));
-		 //	break;
 		 case Type::String:
 			 return std::make_shared<Value>(Array(std::vector<std::string>(args[0]->getStdVector<std::string>().begin() + intdexA, args[0]->getStdVector<std::string>().begin() + intdexB)));
 			 break;
@@ -2001,11 +1939,12 @@ void each(ExpressionPtr collection, std::function<void(ExpressionPtr)> func) {
 
 // Phase 1: scheduler entry point — executes one "step" of a Task
 void IkigaiScriptInterpreter::callTask(TaskRef task) {
-	if (!task || !task->isActive()) return;
-	// Native jobs are completed by NativeJobPool workers, not by the interpreter.
-	// drainCompletions() already set their state before pump() resumed them, so
-	// if we get here they should be Completed/Cancelled already. Just skip.
-	if (task->isNativeJob) return;
+	if (!task || !task->isActive()) {
+		return;
+	}
+	if (task->isNativeJob) {
+		return;
+	}
 	task->state = TaskState::Running;
 	// callCoro handles all execution and state transitions
 	callCoro(task);
@@ -2230,7 +2169,6 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			}
 
 			auto& argName = fnc->argNames[i];
-			//auto& argType = fnc->types.at(argName);
 			auto& ref = scope->variables[argName];
 			if (ref == nullptr) {
 				newVars.push_back(fnc->argNames[i]);
@@ -2429,10 +2367,6 @@ FunctionRef IkigaiScriptInterpreter::newFunction(
 }
 
 FunctionRef IkigaiScriptInterpreter::newOperator(const std::string& name, ScopePtr scope, FunctionRef func) {
-	//if (func->type == FunctionType::Operator && scope->isClassScope) {
-	//	//Operator could not be in class
-	//	throw;
-	//}
 	if (!scope->operators.contains(name)) {
 		scope->operators[name] = {};
 	}
@@ -2735,9 +2669,6 @@ FunctionRef IkigaiScriptInterpreter::resolveOperator(const std::string& name, Sc
 			}
 		}
 	}
-	//auto& func = initialScope->functions[name];
-	//func = std::make_shared<Function>(name);
-	//return func;
 	return nullptr;
 }
 
@@ -2887,18 +2818,9 @@ BlockResult IkigaiScriptInterpreter::needsToReturn(const std::vector<ExpressionP
 	return {LoopInterupt::None, nullptr, nullptr, lastVal};
 }
 
-#include <chrono>
 // walk the tree depth first and replace any function expressions 
 // with a value expression of their results
 ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr scope, Class* classs) {
-	//FOR DEBUGGER
-	//using namespace std::chrono_literals;
-	//while (!data_is_ready_) {
-	//	std::this_thread::sleep_for(0.1s);
-	//}
-	//data_is_ready_ = false;
-	
-
 	LoopInterupt checkLoopInterupt = LoopInterupt::None;
 	auto returnDefExpr = [&checkLoopInterupt, this]() -> ExpressionPtr {
 		switch (checkLoopInterupt) {
@@ -2938,11 +2860,9 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			scope->variables[def->name] = val;
 			return arena.make<ValueNode>(val);
 		}
-		// For live declarations, copy the value to prevent aliasing the guard source's Value* address.
-		// This avoids registering the source variable's address as the live target in DependencyManager.
-		// Regular `var b = a;` intentionally shares the same Value object (reference semantics).
-		if (def->isLive && val) val = std::make_shared<Value>(*val);
-
+		if (def->isLive && val) {
+			val = std::make_shared<Value>(*val);
+		}
 		// --- Tuple destructuring: var (a, b) = expr ---
 		if (!def->patternNames.empty()) {
 			if (val->getType() != Type::Tuple) {
@@ -2979,9 +2899,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			return arena.make<ValueNode>(lastBound ? lastBound : std::make_shared<Value>());
 		}
 
-		// If the declaration has an explicit static type (not Dynamic, not untyped Null-default),
-		// enforce the type constraint at definition time.
-		// Upconvert compatible literal types: Float declared var accepts Int literal.
 		if (!def->typeDescriptor.isDynamic && def->typeDescriptor.type != Type::Null
 			&& def->typeDescriptor.type != val->getType()) {
 			if (def->typeDescriptor.type == Type::Float && val->getType() == Type::Int) {
@@ -3465,7 +3382,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		}
 		else {
 			return returnDefExpr();
-			//return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
 		}
 	}
 	break;
@@ -3545,8 +3461,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			throw Exception("Tuple size " + std::to_string(items.size()) +
 				" does not match pattern size " + std::to_string(da->patternNames.size()));
 		}
-		// Evaluate RHS fully before any assignment (already done above via getValue).
-		// Copy elements so (a,b) = (b,a) works correctly.
 		std::vector<std::shared_ptr<Value>> copies;
 		copies.reserve(items.size());
 		for (auto& item : items) copies.push_back(std::make_shared<Value>(*item));
@@ -3669,9 +3583,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		}
 	}
 	break;
-	// -----------------------------------------------------------------------
-	// Phase 2: await / spawn
-	// -----------------------------------------------------------------------
 	case ExpressionType::Await:
 	{
 		auto* awaitExpr = static_cast<AwaitExpression*>(exp);
@@ -3711,14 +3622,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		return arena.make<ValueNode>(std::make_shared<Value>());
 	}
 	break;
-	// -----------------------------------------------------------------------
-	// Phase 3: sync / race / branch
-	// -----------------------------------------------------------------------
 	case ExpressionType::SyncBlock:
 	{
-		// sync { stmt1; stmt2; }
-		// MVP: run each statement sequentially; if a statement produces a Task, run it to completion.
-		// Returns a list of results.
 		auto* syncExpr = static_cast<SyncBlockExpression*>(exp);
 		auto syncScope = newScope("sync_body", scope);
 		List results;
@@ -3738,8 +3643,6 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	break;
 	case ExpressionType::RaceBlock:
 	{
-		// race { spawn1; spawn2; }
-		// MVP: run each statement; first Task to complete wins, others are cancelled.
 		auto* raceExpr = static_cast<RaceBlockExpression*>(exp);
 		auto raceScope = newScope("race_body", scope);
 		std::vector<TaskRef> tasks;
@@ -3780,12 +3683,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	break;
 	case ExpressionType::BranchBlock:
 	{
-		// branch { body }
-		// MVP: execute body in a detached scope; fires and returns immediately.
-		// Cancel is deferred to scope exit (via deferred cancellation token in Phase 4).
 		auto* branchExpr = static_cast<BranchBlockExpression*>(exp);
 		auto branchScope = newScope("branch_body", scope);
-		// For MVP, just execute immediately (no true background scheduling yet)
 		needsToReturn(branchExpr->subexpressions, branchScope, classs);
 		closeScope(branchScope);
 		return arena.make<ValueNode>(std::make_shared<Value>());
@@ -3811,23 +3710,6 @@ ValuePtr IkigaiScriptInterpreter::getValue(ExpressionPtr exp, ScopePtr scope, Cl
 	// copy the expression so that we don't lose it when we consolidate
 	return static_cast<ValueNode*>(consolidated(exp, scope, classs))->value;
 }
-
-// since the 'else' block in  an if/elfe is technically in a different scope
-// ifelse espressions are not closed immediately and instead left dangling
-// until the next expression is anything other than an 'else' or the else is unconditional
-//bool IkigaiScriptInterpreter::closeDanglingIfExpression() {
-//	if (currentExpression && currentExpression->type == ExpressionType::IfElse) {
-//		if (currentExpression->parent) {
-//			currentExpression = currentExpression->parent;
-//		}
-//		else {
-//			getValue(currentExpression, parseScope, nullptr);
-//			currentExpression = nullptr;
-//		}
-//		return true;
-//	}
-//	return false;
-//}
 
 
 ScopePtr IkigaiScriptInterpreter::newScope(const std::string& name, ScopePtr scope) {
@@ -3887,10 +3769,6 @@ void IkigaiScriptInterpreter::clearState() {
 	parser->clearState();
 }
 
-// ---------------------------------------------------------------------------
-// Phase 5: NativeJobPool host API
-// ---------------------------------------------------------------------------
-
 void IkigaiScriptInterpreter::enableNativePool(size_t numThreads) {
 	if (!nativePool) {
 		nativePool = std::make_unique<NativeJobPool>(
@@ -3920,10 +3798,6 @@ IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilegeFlags priv) : al
 }
 IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilege priv) : IkigaiScriptInterpreter(static_cast<ModulePrivilegeFlags>(priv)) {}
 IkigaiScriptInterpreter::IkigaiScriptInterpreter() : IkigaiScriptInterpreter(ModulePrivilegeFlags()) {}
-
-// ---------------------------------------------------------------------------
-// Bytecode compilation + VM execution
-// ---------------------------------------------------------------------------
 
 bool IkigaiScriptInterpreter::compileFunctionToBytecode(FunctionRef fnc) {
     if (!fnc) return false;
@@ -3961,16 +3835,6 @@ void IkigaiScriptInterpreter::disassembleAll(std::string& out) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// IkigaiScript.cpp — Compiled script I/O API
-// ---------------------------------------------------------------------------
-
-#include "bytecode/serializer.hpp"
-
-// ---------------------------------------------------------------------------
-// buildCompiledScript — collect functions from scope into a Chunk
-// ---------------------------------------------------------------------------
-
 static ChunkRef buildCompiledScript(
     IkigaiScriptInterpreter* interp,
     ScopePtr scope,
@@ -4003,9 +3867,6 @@ static ChunkRef buildCompiledScript(
     return chunk;
 }
 
-// ---------------------------------------------------------------------------
-// compileScript / compileScriptFile
-// ---------------------------------------------------------------------------
 
 IkigaiScriptInterpreter::CompiledScriptRef
 IkigaiScriptInterpreter::compileScript(std::string_view source) {
@@ -4015,7 +3876,8 @@ IkigaiScriptInterpreter::compileScript(std::string_view source) {
     bool failed = false;
     try {
         failed = parser->compile(source);
-    } catch (...) {
+    }
+	catch (...) {
         parser->compileOnly = false;
         parser->pendingTopLevelStatements.clear();
         throw;
@@ -4035,7 +3897,8 @@ IkigaiScriptInterpreter::compileScriptFile(const std::string& path) {
     bool failed = false;
     try {
         failed = parser->compileFile(path);
-    } catch (...) {
+    }
+	catch (...) {
         parser->compileOnly = false;
         parser->pendingTopLevelStatements.clear();
         throw;
@@ -4046,10 +3909,6 @@ IkigaiScriptInterpreter::compileScriptFile(const std::string& path) {
     parser->pendingTopLevelStatements.clear();
     return chunk;
 }
-
-// ---------------------------------------------------------------------------
-// bindCompiledScriptToScope — register named bytecode functions in scope
-// ---------------------------------------------------------------------------
 
 static void bindCompiledScriptToScope(IkigaiScriptInterpreter* interp,
                                       ChunkRef chunk, ScopePtr scope) {
@@ -4066,10 +3925,6 @@ static void bindCompiledScriptToScope(IkigaiScriptInterpreter* interp,
         existing->body     = bfn;
     }
 }
-
-// ---------------------------------------------------------------------------
-// runCompiledScript / runCompiledScriptFile / runCompiledScriptString
-// ---------------------------------------------------------------------------
 
 ValuePtr IkigaiScriptInterpreter::runCompiledScript(CompiledScriptRef chunk,
                                                      ScopePtr scopeArg) {
@@ -4091,10 +3946,6 @@ ValuePtr IkigaiScriptInterpreter::runCompiledScriptString(std::string_view data,
     auto chunk = deserializeCompiledScript(data);
     return runCompiledScript(chunk, scope);
 }
-
-// ---------------------------------------------------------------------------
-// Serialize / deserialize
-// ---------------------------------------------------------------------------
 
 std::string IkigaiScriptInterpreter::serializeCompiledScript(const Chunk& chunk) {
     return IKBCSerializer::serialize(chunk);
@@ -4122,3 +3973,5 @@ IkigaiScriptInterpreter::loadCompiledScriptFile(const std::string& path) {
                       std::istreambuf_iterator<char>());
     return IKBCSerializer::deserialize(data);
 }
+
+} // namespace IkigaiScript

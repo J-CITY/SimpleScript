@@ -25,17 +25,13 @@ namespace IkigaiScript {
 	using namespace std::string_literals;
 
 	class Parser;
-
-	// Dual-architecture execution mode.
-	// Interpreter: classic AST tree-walk (default).
-	// Bytecode:    compile to Chunk then run on the stack VM.
 	enum class ExecutionMode : uint8_t { Interpreter, Bytecode };
 
 	struct BlockResult {
 		LoopInterupt interrupt = LoopInterupt::None;
 		ValuePtr explicitReturn = nullptr;
-		ValuePtr yieldReturn     = nullptr;  // Phase 0: Yield propagation through nested blocks
-		ValuePtr lastValue      = nullptr;
+		ValuePtr yieldReturn = nullptr;
+		ValuePtr lastValue = nullptr;
 	};
 
 	class IkigaiScriptInterpreter {
@@ -44,7 +40,6 @@ namespace IkigaiScript {
 
 		inline static uint64_t currentLine = 0;
 
-		// Execution mode: Interpreter (AST walk, default) or Bytecode (VM).
 		ExecutionMode executionMode = ExecutionMode::Interpreter;
 		void setExecutionMode(ExecutionMode mode) {
 			executionMode = mode;
@@ -54,23 +49,13 @@ namespace IkigaiScript {
 		}
 		ExecutionMode getExecutionMode() const { return executionMode; }
 
-		// Compile a script-defined function into bytecode and attach it to fnc->body.
-		// Returns false if the function is ineligible (generics, forceInterpret, etc.).
 		bool compileFunctionToBytecode(FunctionRef fnc);
 
-		// Compile and run a sequence of top-level statements via the VM.
 		ValuePtr runStatementsBytecode(const std::vector<ExpressionPtr>& stmts, ScopePtr scope);
 
-		// Disassemble all compiled chunks to __DEBUG_OUT__ (debug builds only).
 		void disassembleAll(std::string& out);
-
-		// Phase 1: ConcurrencyScheduler
 		ConcurrencyScheduler scheduler;
-
-		// Phase 5: optional native job pool (created via enableNativePool)
 		std::unique_ptr<NativeJobPool> nativePool;
-
-		// Bytecode VM (created on demand when executionMode == Bytecode).
 		std::unique_ptr<VM> vm;
 
 	private:
@@ -152,27 +137,15 @@ namespace IkigaiScript {
 		void registerExport(ScopePtr scope, const std::string& name);
 		ValuePtr callFunction(const std::string& name, ScopePtr scope, const List& args);
 		ValuePtr callCoro(CoroRef coro);
-		// Phase 1: Task-based execution (called by the scheduler)
 		void callTask(TaskRef task);
-		// Phase 1: Pump the scheduler — run up to maxSteps ready tasks.
-		// Also drains native-job completions if a NativeJobPool is active.
 		int pump(int maxSteps = -1) {
 			if (nativePool) nativePool->drainCompletions(scheduler);
 			return scheduler.pump(this, maxSteps);
 		}
 
-		// Phase 5: Start a NativeJobPool with the given number of worker threads.
-		// Call this once during host setup, before running scripts.
-		// numThreads == 0 → std::thread::hardware_concurrency()
 		void enableNativePool(size_t numThreads = 0);
-
-		// Phase 5: Register a named C++ job that scripts can invoke via nativeJob().
-		// Must be called after enableNativePool().
-		// The lambda runs in a worker thread — do NOT call back into the interpreter.
 		void registerNativeJob(const std::string& name, NativeJob job);
 
-		// Phase 5: Submit a native job programmatically (returns a TaskRef/CoroRef).
-		// Equivalent to what the stdlib nativeJob() function does.
 		TaskRef submitNativeJob(const std::string& name,
 		                        const std::vector<ValuePtr>& args = {});
 		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs = nullptr);
@@ -229,17 +202,15 @@ namespace IkigaiScript {
 		bool readLine(std::string_view text, ScopePtr scope);
 		bool evaluate(std::string_view script, ScopePtr scope);
 		bool evaluateFile(const std::string& path, ScopePtr scope);
-		// Parse-only: returns a compiled Chunk without executing top-level code.
-		// Functions defined in the script are compiled to bytecode in the Chunk.
+		
 		using CompiledScriptRef = ChunkRef;
 		CompiledScriptRef compileScript(std::string_view source);
 		CompiledScriptRef compileScriptFile(const std::string& path);
-		// Serialize / deserialize a compiled Chunk to/from a binary IKBC blob.
+		
 		bool saveCompiledScript(const Chunk& chunk, const std::string& path);
 		std::string serializeCompiledScript(const Chunk& chunk);
 		CompiledScriptRef loadCompiledScriptFile(const std::string& path);
 		CompiledScriptRef deserializeCompiledScript(std::string_view data);
-		// Execute a previously compiled/deserialized Chunk via the VM.
 		ValuePtr runCompiledScript(CompiledScriptRef chunk, ScopePtr scope = nullptr);
 		ValuePtr runCompiledScriptFile(const std::string& path, ScopePtr scope = nullptr);
 		ValuePtr runCompiledScriptString(std::string_view data, ScopePtr scope = nullptr);

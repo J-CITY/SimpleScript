@@ -46,9 +46,6 @@ namespace IkigaiScript {
 				   static_cast<std::underlying_type_t<Enum>>(Lhs) ^ \
 				   static_cast<std::underlying_type_t<Enum>>(Lhs)); \
 	}
-
-	
-	
 }
 
 
@@ -157,8 +154,6 @@ namespace IkigaiScript
 		RaceBlock,
 		BranchBlock,
 	};
-
-	
 
 	enum class TokenType {
 		KeyWord = 0,

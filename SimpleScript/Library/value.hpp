@@ -6,7 +6,6 @@
 namespace IkigaiScript {
     struct Null {};
 
-    
     struct Value {
         TypeDescriptor typeDescriptor;
 
@@ -248,7 +247,6 @@ namespace IkigaiScript {
         std::vector<T>& getStdVector();
         List& getList();
 
-
         SetRef& getSet() {
             return value.asSet;
         }
@@ -279,9 +277,6 @@ namespace IkigaiScript {
             case Type::Float:
                 truthiness = getFloat() != 0;
                 break;
-            //case Type::Vec3:
-            //    truthiness = getVec3() != vec3(0);
-            //    break;
             case Type::String:
                 truthiness = getString().size() > 0;
                 break;
@@ -460,9 +455,6 @@ namespace IkigaiScript {
         case Type::Float:
             return Value{ a.getFloat() - b.getFloat() };
             break;
-        //case Type::Vec3:
-        //    return Value{ a.getVec3() - b.getVec3() };
-        //    break;
         default:
             throw Exception("Operator - not defined for type `"s + getTypeName(a.getType()) + "`");
             break;
@@ -478,9 +470,6 @@ namespace IkigaiScript {
         case Type::Float:
             return Value{ a.getFloat() * b.getFloat() };
             break;
-        //case Type::Vec3:
-        //    return Value{ a.getVec3() * b.getVec3() };
-        //    break;
         default:
             throw Exception("Operator * not defined for type `"s + getTypeName(a.getType()) + "`");
             break;
@@ -499,9 +488,6 @@ namespace IkigaiScript {
         case Type::Float:
             return Value{ a.getFloat() / b.getFloat() };
             break;
-        //case Type::Vec3:
-        //    return Value{ a.getVec3() / b.getVec3() };
-        //    break;
         default:
             throw Exception("Operator / not defined for type `"s + getTypeName(a.getType()) + "`");
             break;
@@ -519,9 +505,6 @@ namespace IkigaiScript {
         case Type::Float:
             a.getFloat() += b.getFloat();
             break;
-        //case Type::Vec3:
-        //    a.getVec3() += b.getVec3();
-        //    break;
         case Type::String:
             a.getString() += b.getString();
             break;
@@ -537,9 +520,6 @@ namespace IkigaiScript {
                 case Type::Float:
                     arr.push_back(b.getFloat());
                     break;
-                //case Type::Vec3:
-                //    arr.push_back(b.getVec3());
-                //    break;
                 case Type::Function:
                     arr.push_back(b.getFunction());
                     break;
@@ -565,7 +545,6 @@ namespace IkigaiScript {
             switch (b.getType()) {
             case Type::Int:
             case Type::Float:
-            //case Type::Vec3:
             case Type::Function:
             case Type::String:
             case Type::Pointer:
@@ -611,9 +590,6 @@ namespace IkigaiScript {
         case Type::Float:
             a.getFloat() -= b.getFloat();
             break;
-        //case Type::Vec3:
-        //    a.getVec3() -= b.getVec3();
-        //    break;
         default:
             throw Exception("Operator -= not defined for type `"s + getTypeName(a.getType()) + "`");
             break;
@@ -630,9 +606,6 @@ namespace IkigaiScript {
         case Type::Float:
             a.getFloat() *= b.getFloat();
             break;
-        //case Type::Vec3:
-        //    a.getVec3() *= b.getVec3();
-        //    break;
         default:
             throw Exception("Operator *= not defined for type `"s + getTypeName(a.getType()) + "`");
             break;
@@ -649,9 +622,6 @@ namespace IkigaiScript {
         case Type::Float:
             a.getFloat() /= b.getFloat();
             break;
-        //case Type::Vec3:
-        //    a.getVec3() /= b.getVec3();
-        //    break;
         default:
             throw Exception("Operator /= not defined for type `"s + getTypeName(a.getType()) + "`");
             break;
@@ -688,9 +658,6 @@ namespace IkigaiScript {
         case Type::Float:
             return a.getFloat() == b.getFloat();
             break;
-        //case Type::Vec3:
-        //    return a.getVec3() == b.getVec3();
-        //    break;
         case Type::String:
             return a.getString() == b.getString();
             break;
@@ -732,9 +699,6 @@ namespace IkigaiScript {
         case Type::Float:
             return a.getFloat() != b.getFloat();
             break;
-        //case Type::Vec3:
-        //    return a.getVec3() != b.getVec3();
-        //    break;
         case Type::String:
             return a.getString() != b.getString();
             break;

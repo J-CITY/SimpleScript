@@ -46,9 +46,6 @@ ExpressionPtr Parser::getResolveVarExpression(const std::string& name, bool clas
 	return interpreter->arena.make<ResolveVar>(name);
 }
 
-// Parse an inline lambda: tokens must begin with "fun" (optionally with capture list [...]
-// before "(") and contain the full fun(...){...} token sequence.
-// Registers the function in the current scope under a unique name and returns a ResolveVar for it.
 ExpressionPtr Parser::parseInlineLambda(std::vector<std::string_view> tokens, ScopePtr scope) {
 	static int uniqId = 0;
 	++uniqId;
@@ -179,27 +176,35 @@ ExpressionPtr Parser::parseInterpolatedString(std::string val, ScopePtr scope, C
 			continue;
 		}
 		if (inString) {
-			if (val[endExpr] == '"') inString = false;
-		} else if (inMultiline) {
+			if (val[endExpr] == '"') 
+				inString = false;
+		}
+		else if (inMultiline) {
 			if (val[endExpr] == '"' && endExpr + 2 < val.size() && val[endExpr+1] == '"' && val[endExpr+2] == '"') {
 				inMultiline = false;
 				endExpr += 2;
 			}
-		} else if (inChar) {
+		}
+		else if (inChar) {
 			if (val[endExpr] == '\'') inChar = false;
-		} else {
+		}
+		else {
 			if (val[endExpr] == '"') {
 				if (endExpr + 2 < val.size() && val[endExpr+1] == '"' && val[endExpr+2] == '"') {
 					inMultiline = true;
 					endExpr += 2;
-				} else {
+				}
+				else {
 					inString = true;
 				}
-			} else if (val[endExpr] == '\'') {
+			}
+			else if (val[endExpr] == '\'') {
 				inChar = true;
-			} else if (val[endExpr] == '{') {
+			}
+			else if (val[endExpr] == '{') {
 				braceDepth++;
-			} else if (val[endExpr] == '}') {
+			}
+			else if (val[endExpr] == '}') {
 				braceDepth--;
 				if (braceDepth == 0) {
 					break;
@@ -224,7 +229,8 @@ ExpressionPtr Parser::parseInterpolatedString(std::string val, ScopePtr scope, C
 		addExpr->subexpressions.push_back(finalExpr);
 		addExpr->subexpressions.push_back(innerExpr);
 		finalExpr = addExpr;
-	} else {
+	}
+	else {
 		finalExpr = innerExpr;
 	}
 
@@ -361,10 +367,10 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				}
 			}
 			else {
-				if (needsUnaryPlacementFix(strings, i)) {
-					//auto rootExpression = static_cast<FunctionExpression*>(root);
-					//rootExpression->subexpressions.insert(rootExpression->subexpressions.begin(),
-					//	interpreter->arena.make<ValueNode>(std::make_shared<Value>(), root));
+				if (needsUnaryPlacementFix(strings, i) && (strings[i] == "++" || strings[i] == "--")) {
+					auto rootExpression = static_cast<FunctionExpression*>(root);
+					rootExpression->subexpressions.insert(rootExpression->subexpressions.begin(),
+						interpreter->arena.make<ValueNode>(std::make_shared<Value>(), root));
 				}
 			}
 		}
@@ -461,25 +467,25 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			}
 			
 			auto blockExpr = interpreter->arena.make<BlockExpression>();
-            
+
 			auto oldParseScope = parseScope;
 			auto oldCurrentExpr = currentExpression;
 			auto oldParseState = parseState;
 			auto oldParseStrings = parseStrings;
-            
+
 			parseScope = interpreter->newScope("__anon"s, scope);
 			currentExpression = blockExpr;
 			clearParseStacks();
-            
+
 			for (auto& tok : minisub) {
 				parse(tok);
 			}
 			if (!parseStrings.empty() || parseState != ParseState::BeginExpression) {
 				parse(";");
 			}
-            
+
 			interpreter->closeScope(parseScope, false);
-            
+
 			parseScope = oldParseScope;
 			currentExpression = oldCurrentExpr;
 			parseState = oldParseState;
@@ -500,7 +506,7 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			auto oldCurrentExpr = currentExpression;
 			auto oldParseState = parseState;
 			auto oldParseStrings = parseStrings;
-            
+
 			currentExpression = nullptr;
 			clearParseStacks();
 			++getExpressionDepth;
@@ -510,14 +516,14 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			if (!parseStrings.empty() || parseState != ParseState::BeginExpression) {
 				parse(";");
 			}
-            
+
 			while (currentExpression) {
 				closeCurrentExpression();
 			}
 			--getExpressionDepth;
 
 			auto parsedStmt = previousExpression;
-            
+
 			parseScope = oldParseScope;
 			currentExpression = oldCurrentExpr;
 			parseState = oldParseState;
@@ -875,10 +881,6 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 			if (isfunc) {
 				ExpressionPtr expr;
 				{
-					//check null operator
-					//if (strings[i] == "?" && ) {//TODO: check that function is null
-					//	return root;
-					//}
 					if (root->type == ExpressionType::FunctionCall && static_cast<FunctionExpression*>(root)->subexpressions.size()) {
 						expr = interpreter->arena.make<MemberFunctionCall>(static_cast<FunctionExpression*>(root)->subexpressions.back(), std::string(strings[++i]), std::vector<ExpressionPtr>());
 						static_cast<FunctionExpression*>(root)->subexpressions.pop_back();

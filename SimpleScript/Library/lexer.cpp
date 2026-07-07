@@ -275,7 +275,6 @@ namespace {
 					break;
 				case ParseIntState::Float:
 					if (input[pos] == '.') {
-						// Second dot — start of '..' operator, stop the number here
 						goto numDone;
 					}
 					if (isNumChar(input[pos])) {}

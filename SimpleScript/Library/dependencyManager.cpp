@@ -31,7 +31,8 @@ namespace IkigaiScript {
             bindings[id].state = LiveBindingState::Active;
             bindings[id].ownerType = ownerType;
             bindings[id].isDynamic = isDynamic;
-        } else {
+        }
+        else {
             id = nextBindingId++;
             LiveBinding binding;
             binding.id = id;
@@ -61,8 +62,9 @@ namespace IkigaiScript {
     }
 
     void DependencyManager::recordRead(const VarSlot& slot) {
-        if (!collecting) return;
-        
+        if (!collecting) {
+            return;
+        }
         // Don't record a self-read (cycle)
         auto it = targetToBindingId.find(slot);
         if (it != targetToBindingId.end() && it->second == collectingBindingId) {
@@ -111,11 +113,13 @@ namespace IkigaiScript {
     }
 
     void DependencyManager::onVariableChanged(const VarSlot& slot) {
-        if (notifySuppressed) return;
-        
+        if (notifySuppressed) {
+            return;
+        }
         auto it = subscribers.find(slot);
-        if (it == subscribers.end()) return;
-        
+        if (it == subscribers.end()) {
+            return;
+        }
         std::unordered_set<size_t> recomputingSet;
         std::vector<size_t> subsToNotify = it->second; // copy in case it changes
         
@@ -136,9 +140,12 @@ namespace IkigaiScript {
         
         // Snapshot the ownerType before potential rehash (getValue may insert new bindings).
         LiveBinding localBinding = bindings[bindingId];
-        if (localBinding.state != LiveBindingState::Active || !localBinding.guardExpr) return;
-        if (localBinding.state != LiveBindingState::Active || !localBinding.guardExpr) return;
-        
+        if (localBinding.state != LiveBindingState::Active || !localBinding.guardExpr) {
+            return;
+        }
+        if (localBinding.state != LiveBindingState::Active || !localBinding.guardExpr) {
+            return;
+        }
         recomputingSet.insert(bindingId);
         
         // Evaluate guard and collect deps
@@ -148,9 +155,10 @@ namespace IkigaiScript {
             if (interpreter) {
                 newVal = interpreter->getValue(localBinding.guardExpr, localBinding.definitionScope, nullptr);
             }
-        } catch (...) {
+        }
+        catch (...) {
             endCollectReads(bindingId);
-            throw;
+            throw Exception("Live dependency cycle detected");
         }
         endCollectReads(bindingId);
         
@@ -170,18 +178,23 @@ namespace IkigaiScript {
             td.isNullable  = binding.ownerType.isNullable;
             td.isInit      = true;
             newVal->typeDescriptor = td;
-        } else {
+        }
+        else {
             // Static: if ownerType.type==Null (pending slot, no declared type), infer from value.
             if (binding.ownerType.type == Type::Null) {
                 binding.ownerType.type = newVal->getType();
-                if (!binding.ownerType.subtype && newVal->typeDescriptor.subtype)
+                if (!binding.ownerType.subtype && newVal->typeDescriptor.subtype) {
                     binding.ownerType.subtype = newVal->typeDescriptor.subtype;
-                if (!binding.ownerType.subtype2 && newVal->typeDescriptor.subtype2)
+                }
+                if (!binding.ownerType.subtype2 && newVal->typeDescriptor.subtype2) {
                     binding.ownerType.subtype2 = newVal->typeDescriptor.subtype2;
-            } else if (newVal->getType() != binding.ownerType.type) {
+                }
+            }
+            else if (newVal->getType() != binding.ownerType.type) {
                 if (binding.ownerType.type == Type::Float && newVal->getType() == Type::Int) {
                     newVal = std::make_shared<Value>(static_cast<double>(newVal->getInt()));
-                } else if (newVal->getType() != Type::Null || !binding.ownerType.isNullable) {
+                }
+                else if (newVal->getType() != Type::Null || !binding.ownerType.isNullable) {
                     throw TypeConvertError(binding.ownerType, newVal->typeDescriptor);
                 }
             }
@@ -204,7 +217,8 @@ namespace IkigaiScript {
                     *binding.target.valuePtr = *newVal;
                     binding.target.valuePtr->typeDescriptor = newVal->typeDescriptor;
                 }
-            } catch (...) {
+            }
+            catch (...) {
                 notifySuppressed = wasSuppressed;
                 throw;
             }
