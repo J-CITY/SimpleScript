@@ -7,7 +7,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 # --- Library (Core Interpreter) ---
 file(GLOB CORE_SOURCES "Library/*.cpp")
 file(GLOB CONCURRENCY_SOURCES "Library/concurrency/*.cpp")
-add_library(IkigaiScriptCore ${CORE_SOURCES} ${CONCURRENCY_SOURCES})
+file(GLOB BYTECODE_SOURCES "Library/bytecode/*.cpp")
+file(GLOB VISITOR_SOURCES "Library/visitor/*.cpp")
+add_library(IkigaiScriptCore ${CORE_SOURCES} ${CONCURRENCY_SOURCES}
+                              ${BYTECODE_SOURCES} ${VISITOR_SOURCES})
 target_include_directories(IkigaiScriptCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- Tests ---

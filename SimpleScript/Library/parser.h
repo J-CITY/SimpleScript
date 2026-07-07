@@ -19,7 +19,13 @@ namespace IkigaiScript {
 		bool readLine(std::string_view text, ScopePtr scope);
 		bool evaluate(std::string_view script, ScopePtr scope);
 		bool evaluateFile(const std::string& path, ScopePtr scope);
+		// Parse-only (no top-level execution); collected stmts go into pendingTopLevelStatements.
+		bool compile(std::string_view script);
+		bool compileFile(const std::string& path);
 		void clearState();
+		// In compile-only mode, collects stmt into pendingTopLevelStatements instead of executing.
+		void evalOrCollect(ExpressionPtr stmt);
+		void evalOrCollect(std::vector<std::string_view> line);
 		bool closeCurrentExpression();
 
 		void parse(std::string_view token);
@@ -52,6 +58,10 @@ namespace IkigaiScript {
 		int getExpressionDepth = 0;  // incremented during getExpression inner parse loops
 		
 		bool pendingLive = false;
+
+		// When true, top-level expressions are collected rather than executed.
+		bool compileOnly = false;
+		std::vector<ExpressionPtr> pendingTopLevelStatements;
 		
 		std::vector<Metadata> pendingMetadata;
 	};

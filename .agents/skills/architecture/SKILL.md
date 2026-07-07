@@ -86,7 +86,7 @@ The parser is a state machine driven by `ParseState` enum (in `enums.h`). Key st
 | `DefineClass` / `ClassArgs` | `class` keyword |
 | `GenericBody` | generic function `<T>` |
 | `ReadLine` | any non-keyword expression |
-| `ReturnLine` / `YeldLine` | `return` / `yeld` |
+| `ReturnLine` / `YieldLine` | `return` / `yield` |
 | `LoopCall` / `ForEach` | `for` / `while` / `foreach` |
 | `IfCall` / `ExpectIfEnd` | `if` / `else` |
 | `Decorator` / `DecoratorArgs` | `@` |
@@ -499,7 +499,7 @@ SimpleScript implements Verse-like cooperative async via a single-threaded sched
 ```
 Script layer (primary)                 Host layer (optional)
 ──────────────────────────             ──────────────────────
-coro f() { yeld …; return …; }         interp.pump(N)
+coro f() { yield …; return …; }         interp.pump(N)
 var t = f();      // → TaskRef         interp.scheduler.clear()
 await t;          // drive to done
 spawn { body }    // fire-and-forget
@@ -528,7 +528,7 @@ struct Task {
     int         pc = 0;         // program counter (expressionId)
     TaskState   state = TaskState::Created;
     ValuePtr    result;          // final return value
-    ValuePtr    suspendPayload;  // last yeld value
+    ValuePtr    suspendPayload;  // last yield value
     std::weak_ptr<Task> awaitingTask;   // child we're waiting for
     std::weak_ptr<Task> parent;
     std::vector<std::shared_ptr<Task>> children;
@@ -540,12 +540,12 @@ using Coro = Task;    // backward-compat alias
 using CoroRef = TaskRef;
 ```
 
-### coro / yeld (existing API — upgraded)
+### coro / yield (existing API — upgraded)
 
 - **Unique scopes**: `callFunction` for `isCoro` now uses `fnc->name + "__coro_" + counter` (not `fnc->name`) to avoid stale frame reuse.
 - **Exception safety**: `callCoro` wraps body execution in try/catch; on exception sets `state = Cancelled` and closes scope before re-throwing.
 - **`task->result`** is stored on every `return` (and on body-exhaustion). `await` uses `task->result` to extract the completed value.
-- **Yeld propagation**: `consolidated(Yeld)` now returns `ValueNode(val, ExpressionType::Yeld)`. `needsToReturn` has a `yeldReturn` field and propagates it through `IfElse`, `Block`, `Loop`, `ForEach`, `Match` cases.
+- **Yield propagation**: `consolidated(Yield)` now returns `ValueNode(val, ExpressionType::Yield)`. `needsToReturn` has a `yieldReturn` field and propagates it through `IfElse`, `Block`, `Loop`, `ForEach`, `Match` cases.
 
 ### await
 
@@ -611,7 +611,7 @@ token->isCancelled();
 
 ### `Function::isSuspending`
 
-`Function` has a new field `bool isSuspending = false`. Currently always equals `isCoro`. Future phases will use it for static checks: `await`/`yeld` inside non-suspending function → Exception.
+`Function` has a new field `bool isSuspending = false`. Currently always equals `isCoro`. Future phases will use it for static checks: `await`/`yield` inside non-suspending function → Exception.
 
 ### `IkigaiScriptInterpreter` API
 
@@ -674,4 +674,152 @@ interp.pump()
 - `await` inside loops blocks until completion (no interleaving with scheduler).
 - No `sleep()` builtin.
 - `thread.newThread` optional module is still unsafe (data race on shared interpreter); do not use for concurrency.
+
+---
+
+## 24. Bytecode VM (Dual Architecture)
+
+SimpleScript has a dual execution architecture: the classic AST tree-walker (default) and a new stack-based bytecode VM.
+
+### Overview
+
+```
+Lexer → Parser → AST
+                 │
+                 ├─ ExecutionMode::Interpreter → consolidated() (default)
+                 │
+                 └─ ExecutionMode::Bytecode → BytecodeCompiler (Visitor) → Chunk → VM::execute()
+```
+
+Both paths share all runtime services: `resolveVariable`, `callFunction` (for builtins), `commitTransaction`, `dependencyManager`, `runDefers`.
+
+### ExecutionMode API
+
+```cpp
+interp.setExecutionMode(ExecutionMode::Bytecode);   // switch to VM
+interp.setExecutionMode(ExecutionMode::Interpreter); // switch back (default)
+```
+
+Per-function opt-out/opt-in via `Function` fields:
+```cpp
+fnc->forceInterpret = true;   // @interpret decorator — always use AST even in Bytecode mode
+fnc->preferBytecode = true;   // @bytecode decorator — compile in Interpreter mode too
+```
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `Library/bytecode/bytecode_fwd.hpp` | Forward declares `BytecodeFunction` / `BytecodeFunctionRef` (breaks circular dependency) |
+| `Library/bytecode/opcodes.hpp` | `enum class OpCode : uint8_t` with full opcode set + `opcodeName()` |
+| `Library/bytecode/chunk.hpp` | `BytecodeFunction` (code + constant pool + name pool) and `Chunk` |
+| `Library/bytecode/disassembler.hpp/.cpp` | Human-readable listing for debug |
+| `Library/bytecode/compiler.hpp/.cpp` | `BytecodeCompiler : AstVisitor` — walks AST → emits opcodes |
+| `Library/bytecode/vm.hpp/.cpp` | Stack VM (`VM::execute()` dispatch loop) |
+| `Library/visitor/ast_visitor.hpp` | Abstract `AstVisitor` base (plan §17 Visitor pattern) |
+| `Library/visitor/ast_visitor.cpp` | `accept()` implementations for every expression node |
+
+### FunctionBodyVariant — 5th Alternative
+
+```cpp
+using FunctionBodyVariant = std::variant<
+    std::vector<ExpressionPtr>,   // Subexpressions (AST)
+    Lambda, ScopedLambda, ClassLambda,
+    BytecodeFunctionRef            // Bytecode (compiled)
+>;
+enum class FunctionBodyType { Subexpressions, Lambda, ScopedLambda, ClassLambda, Bytecode };
+```
+
+`callFunction` dispatches `FunctionBodyType::Bytecode` to `vm->runFunction()`. Both `callCoro` and `callFunction` handle `Bytecode` bodies. The AST body (`Subexpressions`) is preserved as a fallback.
+
+### Circular Dependency Rule
+
+`types.hpp` MUST NOT include `chunk.hpp` directly. Instead it includes `bytecode/bytecode_fwd.hpp` (forward declaration only). Only `chunk.hpp` and translation units that need the full `BytecodeFunction` definition should include `chunk.hpp`.
+
+### Compilation API
+
+```cpp
+// Compile one function to bytecode (replaces body variant):
+bool compiled = interp.compileFunctionToBytecode(fnc);
+
+// Compile and run top-level statements via VM:
+ValuePtr result = interp.runStatementsBytecode(stmts, scope);
+
+// Debug: print all compiled chunks:
+std::string listing;
+interp.disassembleAll(listing);
+```
+
+### YieldSignal
+
+`YieldSignal` (in `exception.h`) is thrown by `OP_YELD` in the VM and caught by `callCoro` to suspend the task and save the bytecode IP:
+
+```cpp
+struct YieldSignal {
+    ValuePtr payload;
+    int savedIp = 0;
+};
+```
+
+### Invariants
+
+- `BytecodeFunction` lives in a `shared_ptr` and survives `arena.clear()` / `clearState()`.
+- Generic functions (`!fnc->genericParams.empty()`) are never compiled to bytecode — monomorphization requires re-parse.
+- `VM` and `BytecodeCompiler` are `friend`s of `IkigaiScriptInterpreter`.
+- C++ builtins (`Lambda`, `ScopedLambda`, `ClassLambda`) are **never compiled**; the VM dispatches them as `OP_CALL_BUILTIN` back to `callFunction`.
+
+### Compiled Script I/O API
+
+`IkigaiScriptInterpreter` exposes a high-level API for compile-once / run-many workflows:
+
+```cpp
+using CompiledScriptRef = ChunkRef;  // shared_ptr<Chunk>
+
+// --- Compile source → Chunk (no top-level execution) ---
+CompiledScriptRef compileScript(std::string_view source);
+CompiledScriptRef compileScriptFile(const std::string& path);
+
+// --- Serialize Chunk → binary IKBC blob ---
+std::string serializeCompiledScript(const Chunk& chunk);
+bool saveCompiledScript(const Chunk& chunk, const std::string& path);
+
+// --- Deserialize IKBC blob → Chunk ---
+CompiledScriptRef deserializeCompiledScript(std::string_view data);
+CompiledScriptRef loadCompiledScriptFile(const std::string& path);
+
+// --- Execute a compiled Chunk via VM ---
+ValuePtr runCompiledScript(CompiledScriptRef chunk, ScopePtr scope = nullptr);
+ValuePtr runCompiledScriptFile(const std::string& path, ScopePtr scope = nullptr);
+ValuePtr runCompiledScriptString(std::string_view data, ScopePtr scope = nullptr);
+```
+
+**How compile works:** `compileScript` sets `parser->compileOnly = true`, which makes `closeCurrentExpression()` collect top-level statements in `parser->pendingTopLevelStatements` instead of executing them. All eligible scope functions are compiled to bytecode and stored in `Chunk::functions`; top-level statements become `Chunk::main`.
+
+**IKBC v1 binary format** (`Library/bytecode/serializer.hpp/.cpp`):
+
+```
+magic[4]="IKBC" + version:uint32(1)
+named_fn_count:uint32
+  repeat { name:String + argNames[] + is_coro:uint8 + BFPayload }
+main:BFPayload
+
+BFPayload: localCount:uint16 + upvalueCount:uint16 + is_coro:uint8
+           + code:bytes + lines:int32[] + names:String[] + constants:ConstEntry[]
+
+ConstEntry tags: 0=Null 1=Bool 2=Int 3=Float 4=String
+                 5=TypeDescriptor 6=FunctionEmbedded(recursive BFPayload)
+```
+
+All integers are little-endian. `std::string` is used as the buffer type (binary-safe, supports `\0`).
+
+**After deserialization**, `bindCompiledScriptToScope` registers each named function from `Chunk::functions` in the interpreter's scope with the correct `argNames` and `BytecodeFunctionRef` body, so the functions are callable by name.
+
+**v1 limitations:**
+- `import` statements inside a compiled script still load modules via `evaluate()` (interpreted).
+- Generic functions are not compiled to bytecode (monomorphization requires re-parse).
+- C++ builtins are never serialized; they are re-resolved from scope at runtime via `OP_CALL_BUILTIN`.
+
+### Tests
+
+`Tests/BytecodeTests.cpp` — 23 dual-run tests + 6 compile I/O tests. `expectSameOutput(code)` runs the same script in both Interpreter and Bytecode modes and asserts identical `__DEBUG_OUT__`. The compile I/O tests are tagged `[bytecode][compile_io]`.
 

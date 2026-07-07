@@ -15,6 +15,7 @@
 #include "exception.h"
 #include "stringUtils.hpp"
 #include "concurrency/task.hpp"
+#include "bytecode/bytecode_fwd.hpp"
 
 namespace IkigaiScript {
 
@@ -336,14 +337,16 @@ namespace IkigaiScript {
         std::vector<ExpressionPtr>,
         Lambda,
         ScopedLambda,
-        ClassLambda
+        ClassLambda,
+        BytecodeFunctionRef        // compiled bytecode path
         >;
 
     enum class FunctionBodyType : uint8_t {
         Subexpressions,
         Lambda,
         ScopedLambda,
-        ClassLambda
+        ClassLambda,
+        Bytecode                   // compiled bytecode path
     };
 
     // Range value type: start..end (exclusive) or start..=end (inclusive)
@@ -365,6 +368,8 @@ namespace IkigaiScript {
         bool variableArgsParam = false;
         bool isCoro = false;
         bool isSuspending = false;  // true for coro/async functions (isCoro implies isSuspending)
+        bool forceInterpret = false;  // @interpret decorator — always use AST path even in Bytecode mode
+        bool preferBytecode = false;  // @bytecode decorator — compile even in Interpreter mode
         std::optional<TypeDescriptor> variableArgsParamType;
         std::vector<std::string> genericParams;
         std::string genericBodyRaw;

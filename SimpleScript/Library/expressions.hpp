@@ -16,6 +16,7 @@ namespace IkigaiScript {
 	struct ResolveVar;
 	struct Foreach;
 	class IkigaiScriptInterpreter;
+	struct AstVisitor;
 
 	struct LineInfo {
 		LineInfo();
@@ -56,6 +57,8 @@ namespace IkigaiScript {
 
 		virtual ~Expression() = default;
 
+		virtual void accept(AstVisitor& v);
+
 		virtual ExpressionPtr back() {
 			return nullptr;
 		}
@@ -91,6 +94,8 @@ namespace IkigaiScript {
 
 		FunctionExpression(FunctionRef fnc, ExpressionPtr par) : Expression(ExpressionType::FunctionDef, par), function(new Value(fnc)) {}
 		FunctionExpression(ValuePtr fncvalue) :Expression(ExpressionType::FunctionCall), function(fncvalue) {}
+
+		void accept(AstVisitor& v) override;
 
 
 		//FunctionExpression() : Expression() {}
@@ -183,7 +188,7 @@ namespace IkigaiScript {
 		MemberVariable(ExpressionPtr ob, const std::string& name_) : Expression(ExpressionType::MemberVariable), object(ob), name(name_) {}
 		MemberVariable() : Expression(ExpressionType::MemberVariable) {}
 
-		
+		void accept(AstVisitor& v) override;
 	};
 
 	struct MemberFunctionCall : public Expression {
@@ -199,7 +204,7 @@ namespace IkigaiScript {
 			subexpressions.clear();
 		}
 
-		
+		void accept(AstVisitor& v) override;
 
 		~MemberFunctionCall() override {
 			clear();
@@ -212,16 +217,16 @@ namespace IkigaiScript {
 		Return(ExpressionPtr e, ExpressionPtr par = nullptr) : Expression(ExpressionType::Return, par), expression(e) {}
 		Return() : Expression(ExpressionType::Return) {}
 
-		
+		void accept(AstVisitor& v) override;
 	};
 
-	struct Yeld : public Expression {
+	struct Yield : public Expression {
 		ExpressionPtr expression = nullptr;
 
-		Yeld(ExpressionPtr e, ExpressionPtr par = nullptr) : Expression(ExpressionType::Yeld, par), expression(e) {}
-		Yeld() : Expression(ExpressionType::Yeld) {}
+		Yield(ExpressionPtr e, ExpressionPtr par = nullptr) : Expression(ExpressionType::Yield, par), expression(e) {}
+		Yield() : Expression(ExpressionType::Yield) {}
 
-		
+		void accept(AstVisitor& v) override;
 	};
 
 	struct Continue : public Expression {
@@ -229,7 +234,7 @@ namespace IkigaiScript {
 		Continue(ExpressionPtr par) : Expression(ExpressionType::Continue, par) {}
 		Continue() : Expression(ExpressionType::Continue) {}
 
-		
+		void accept(AstVisitor& v) override;
 	};
 
 	struct Break : public Expression {
@@ -237,7 +242,7 @@ namespace IkigaiScript {
 		Break(ExpressionPtr par) : Expression(ExpressionType::Break, par) {}
 		Break() : Expression(ExpressionType::Break) {}
 
-		
+		void accept(AstVisitor& v) override;
 	};
 
 	struct If {
@@ -254,7 +259,7 @@ namespace IkigaiScript {
 
 		std::vector<If> states;
 
-		
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override {
 			return states.back().subexpressions.back();
@@ -288,7 +293,8 @@ namespace IkigaiScript {
 
 		Loop(ExpressionPtr par) : Expression(ExpressionType::Loop, par) {}
 		Loop(): Expression(ExpressionType::Loop) {}
-		
+
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override {
 			return subexpressions.back();
@@ -318,7 +324,7 @@ namespace IkigaiScript {
 
 				Foreach(ExpressionPtr par = nullptr): Expression(ExpressionType::ForEach, par) {}
 
-		
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override {
 			return subexpressions.back();
@@ -341,6 +347,8 @@ namespace IkigaiScript {
 		std::vector<ExpressionPtr> subexpressions;
 
 		DeferExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Defer, par) {}
+
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override {
 			return subexpressions.back();
@@ -369,7 +377,7 @@ namespace IkigaiScript {
 		ResolveVar(ExpressionPtr par = nullptr) : Expression(ExpressionType::ResolveVar, par) {}
 		ResolveVar(const std::string& n, ExpressionPtr par = nullptr) : Expression(ExpressionType::ResolveVar, par), name(n) {}
 
-		
+		void accept(AstVisitor& v) override;
 	};
 
 	struct DefineVar : public Expression {
@@ -386,6 +394,8 @@ namespace IkigaiScript {
 			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr), typeDescriptor(td) {}
 		DefineVar(std::vector<std::string> names, ExpressionPtr defExpr, const TypeDescriptor& td, ExpressionPtr par = nullptr) :
 			Expression(ExpressionType::DefineVar, par), patternNames(std::move(names)), defineExpression(defExpr), typeDescriptor(td) {}
+
+		void accept(AstVisitor& v) override;
 	};
 
 	struct LiveRebind : public Expression {
@@ -394,6 +404,8 @@ namespace IkigaiScript {
 
 		LiveRebind(const std::string& target, ExpressionPtr guard, ExpressionPtr par = nullptr)
 			: Expression(ExpressionType::LiveRebind, par), targetName(target), guardExpr(guard) {}
+
+		void accept(AstVisitor& v) override;
 	};
 
 	struct NamedArgumentExpression : public Expression {
@@ -401,6 +413,8 @@ namespace IkigaiScript {
 		ExpressionPtr expression;
 		NamedArgumentExpression(const std::string& n, ExpressionPtr expr, ExpressionPtr par = nullptr) 
 			: Expression(ExpressionType::NamedArgument, par), name(n), expression(expr) {}
+
+		void accept(AstVisitor& v) override;
 	};
 
 	struct ValueNode : public Expression {
@@ -413,7 +427,8 @@ namespace IkigaiScript {
 			value = v->value;
 		}
 				ValueNode(ValuePtr val, ExpressionPtr par): Expression(ExpressionType::Value, par), value(val) {}
-		
+
+		void accept(AstVisitor& v) override;
 	};
 
 	//OLD
@@ -674,6 +689,8 @@ namespace IkigaiScript {
 
 		BlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Block, par) {}
 
+		void accept(AstVisitor& v) override;
+
 		ExpressionPtr back() override {
 			return subexpressions.back();
 		}
@@ -708,6 +725,8 @@ namespace IkigaiScript {
 
 		MatchExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Match, par) {}
 
+		void accept(AstVisitor& v) override;
+
 		ExpressionPtr back() override {
 			return arms.empty() ? nullptr : arms.back().body.back();
 		}
@@ -737,6 +756,8 @@ namespace IkigaiScript {
 		std::vector<ExpressionPtr> elements;
 
 		TupleLiteralExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::TupleLiteral, par) {}
+
+		void accept(AstVisitor& v) override;
 	};
 
 	// --- Tuple destructuring reassignment: (a, b) = expr ---
@@ -747,6 +768,8 @@ namespace IkigaiScript {
 
 		DestructuringAssign(std::vector<std::string> names, ExpressionPtr valExpr, ExpressionPtr par = nullptr)
 			: Expression(ExpressionType::DestructuringAssign, par), patternNames(std::move(names)), valueExpression(valExpr) {}
+
+		void accept(AstVisitor& v) override;
 	};
 
 	// --- Phase 2: await / spawn ---
@@ -758,6 +781,8 @@ namespace IkigaiScript {
 		AwaitExpression(ExpressionPtr te, ExpressionPtr par = nullptr)
 			: Expression(ExpressionType::Await, par), taskExpr(te) {}
 		AwaitExpression() : Expression(ExpressionType::Await) {}
+
+		void accept(AstVisitor& v) override;
 	};
 
 	// spawn { body }  — create and enqueue a new Task; evaluates to TaskRef
@@ -767,6 +792,8 @@ namespace IkigaiScript {
 		ExpressionPtr callExpr = nullptr;
 
 		SpawnExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Spawn, par) {}
+
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
 		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
@@ -786,6 +813,8 @@ namespace IkigaiScript {
 
 		SyncBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::SyncBlock, par) {}
 
+		void accept(AstVisitor& v) override;
+
 		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
 		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
 		std::vector<ExpressionPtr>::iterator end()   override { return subexpressions.end(); }
@@ -800,6 +829,8 @@ namespace IkigaiScript {
 		std::vector<ExpressionPtr> subexpressions;
 
 		RaceBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::RaceBlock, par) {}
+
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
 		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
@@ -816,6 +847,8 @@ namespace IkigaiScript {
 
 		BranchBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::BranchBlock, par) {}
 
+		void accept(AstVisitor& v) override;
+
 		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
 		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
 		std::vector<ExpressionPtr>::iterator end()   override { return subexpressions.end(); }
@@ -830,6 +863,8 @@ namespace IkigaiScript {
 		bool producesValue = false;
 
 		SafeBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::SafeBlock, par) {}
+
+		void accept(AstVisitor& v) override;
 
 		ExpressionPtr back() override {
 			return subexpressions.back();

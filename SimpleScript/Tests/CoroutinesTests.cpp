@@ -7,12 +7,12 @@ using namespace std::string_literals;
 // Basic coroutine lifecycle
 // =============================================================================
 
-TEST_CASE("coro: basic yeld-yeld-return sequence", "[coroutines]") {
+TEST_CASE("coro: basic yield-yield-return sequence", "[coroutines]") {
     auto interp = makeInterp();
     run(interp, R"(
         coro f(a, b) {
-            yeld a + b + 2;
-            yeld a + b + 4;
+            yield a + b + 2;
+            yield a + b + 4;
             return a + b;
         };
         var cr = f(13, 2);
@@ -24,11 +24,11 @@ TEST_CASE("coro: basic yeld-yeld-return sequence", "[coroutines]") {
     REQUIRE(interp.__DEBUG_OUT__ == "171915");
 }
 
-TEST_CASE("coro: single yeld then return", "[coroutines]") {
+TEST_CASE("coro: single yield then return", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro g(x) {
-            yeld x * 2;
+            yield x * 2;
             return x * 3;
         };
         var c = g(5);
@@ -44,7 +44,7 @@ TEST_CASE("coro: is active after creation, before exhaust", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro h() {
-            yeld 1;
+            yield 1;
             return 2;
         };
         var c = h();
@@ -59,7 +59,7 @@ TEST_CASE("coro: becomes inactive after exhaustion", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro h() {
-            yeld 1;
+            yield 1;
             return 2;
         };
         var c = h();
@@ -71,13 +71,13 @@ TEST_CASE("coro: becomes inactive after exhaustion", "[coroutines]") {
     REQUIRE(cval->getCoro()->isActive() == false);
 }
 
-TEST_CASE("coro: multiple yeld values are correct", "[coroutines]") {
+TEST_CASE("coro: multiple yield values are correct", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro counter(start) {
-            yeld start;
-            yeld start + 1;
-            yeld start + 2;
+            yield start;
+            yield start + 1;
+            yield start + 2;
             return start + 3;
         };
         var c = counter(10);
@@ -95,7 +95,7 @@ TEST_CASE("coro: multiple yeld values are correct", "[coroutines]") {
 TEST_CASE("coro: truthiness while active", "[coroutines]") {
     auto interp = makeInterp();
     run(interp, R"(
-        coro gen() { yeld 1; return 2; };
+        coro gen() { yield 1; return 2; };
         var c = gen();
         if (c) { print("active"); }
         c();
@@ -113,8 +113,8 @@ TEST_CASE("coro: two instances are independent (unique scopes)", "[coroutines]")
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro counter(start) {
-            yeld start;
-            yeld start + 1;
+            yield start;
+            yield start + 1;
             return start + 2;
         };
         var a = counter(0);
@@ -132,15 +132,15 @@ TEST_CASE("coro: two instances are independent (unique scopes)", "[coroutines]")
 }
 
 // =============================================================================
-// Phase 0: Yeld inside a nested if block
+// Phase 0: Yield inside a nested if block
 // =============================================================================
 
-TEST_CASE("coro: yeld inside if branch", "[coroutines]") {
+TEST_CASE("coro: yield inside if branch", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro f(flag) {
             if (flag) {
-                yeld 42;
+                yield 42;
             }
             return 0;
         };
@@ -161,7 +161,7 @@ TEST_CASE("coro: exception in body marks inactive", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro bad() {
-            yeld 1;
+            yield 1;
             print("boom");
         };
         var c = bad();
@@ -183,7 +183,7 @@ TEST_CASE("coro: same name reused creates fresh instances", "[coroutines]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro counter(n) {
-            yeld n;
+            yield n;
             return n + 1;
         };
         var c1 = counter(5);

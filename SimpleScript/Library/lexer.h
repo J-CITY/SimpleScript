@@ -28,7 +28,7 @@ namespace IkigaiScript {
 		'(', ')', '{', '}', '[', ']', ';', '+', '-', '/', '*', '%', '<', '>', '=', '!', '&', '|', '"' };
 	inline const std::set<std::string, std::less<>> keyWords = { "if", "else", "for", "while", "foreach", "break", "continue",
 		"var", "const",
-		"class", "fun", "operator", "coroutine", "coro", "return", "yeld",
+		"class", "fun", "operator", "coroutine", "coro", "return", "yield",
 		"true", "false", "import",
 		"match", "case", "default", "dynamic",
 		"module", "export", "using", "from", "as", "defer", "live",

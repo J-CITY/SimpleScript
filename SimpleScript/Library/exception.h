@@ -30,4 +30,13 @@ namespace IkigaiScript {
 			type = ExceptionType::TypeConvert;
 		}
 	};
+
+	struct Value;
+
+	// Thrown by the bytecode VM when a coro executes OP_YELD.
+	// Caught by VM::resumeCoro / IkigaiScriptInterpreter::callCoro to suspend the task.
+	struct YieldSignal {
+		std::shared_ptr<Value> payload;
+		int savedIp = 0;
+	};
 }

@@ -27,7 +27,7 @@ struct Class;
 enum class TaskState : uint8_t {
     Created,    // constructed, not yet started
     Running,    // currently inside callTask
-    Suspended,  // waiting for a child / yeld issued
+    Suspended,  // waiting for a child / yield issued
     Completed,  // return executed (or body exhausted)
     Cancelled,  // cancelled via token
 };
@@ -63,7 +63,7 @@ struct Task : std::enable_shared_from_this<Task> {
     TaskState state = TaskState::Created;
 
     // Yield / result payload
-    ValuePtr suspendPayload;    // value produced by the last yeld
+    ValuePtr suspendPayload;    // value produced by the last yield
     ValuePtr result;            // final return value when Completed
 
     // Structured concurrency links

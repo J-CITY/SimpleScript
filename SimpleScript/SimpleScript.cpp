@@ -631,8 +631,8 @@ void expressionTests() {
 		BEGIN_TEST("Func")
 			CODE(R"(
 			coro f(a, b) {
-				yeld a + b + 2;
-				yeld a + b + 4;
+				yield a + b + 2;
+				yield a + b + 4;
 				return a + b;
 			};
 			

@@ -13,6 +13,9 @@
 #include "dependencyManager.hpp"
 #include "concurrency/scheduler.hpp"
 #include "concurrency/native_job_pool.hpp"
+#include "bytecode/vm.hpp"
+#include "bytecode/compiler.hpp"
+#include "bytecode/disassembler.hpp"
 
 #define TEST_MOD
 
@@ -23,10 +26,15 @@ namespace IkigaiScript {
 
 	class Parser;
 
+	// Dual-architecture execution mode.
+	// Interpreter: classic AST tree-walk (default).
+	// Bytecode:    compile to Chunk then run on the stack VM.
+	enum class ExecutionMode : uint8_t { Interpreter, Bytecode };
+
 	struct BlockResult {
 		LoopInterupt interrupt = LoopInterupt::None;
 		ValuePtr explicitReturn = nullptr;
-		ValuePtr yeldReturn     = nullptr;  // Phase 0: Yeld propagation through nested blocks
+		ValuePtr yieldReturn     = nullptr;  // Phase 0: Yield propagation through nested blocks
 		ValuePtr lastValue      = nullptr;
 	};
 
@@ -36,16 +44,41 @@ namespace IkigaiScript {
 
 		inline static uint64_t currentLine = 0;
 
+		// Execution mode: Interpreter (AST walk, default) or Bytecode (VM).
+		ExecutionMode executionMode = ExecutionMode::Interpreter;
+		void setExecutionMode(ExecutionMode mode) {
+			executionMode = mode;
+			if (mode == ExecutionMode::Bytecode && !vm) {
+				vm = std::make_unique<VM>(this);
+			}
+		}
+		ExecutionMode getExecutionMode() const { return executionMode; }
+
+		// Compile a script-defined function into bytecode and attach it to fnc->body.
+		// Returns false if the function is ineligible (generics, forceInterpret, etc.).
+		bool compileFunctionToBytecode(FunctionRef fnc);
+
+		// Compile and run a sequence of top-level statements via the VM.
+		ValuePtr runStatementsBytecode(const std::vector<ExpressionPtr>& stmts, ScopePtr scope);
+
+		// Disassemble all compiled chunks to __DEBUG_OUT__ (debug builds only).
+		void disassembleAll(std::string& out);
+
 		// Phase 1: ConcurrencyScheduler
 		ConcurrencyScheduler scheduler;
 
 		// Phase 5: optional native job pool (created via enableNativePool)
 		std::unique_ptr<NativeJobPool> nativePool;
 
+		// Bytecode VM (created on demand when executionMode == Bytecode).
+		std::unique_ptr<VM> vm;
+
 	private:
 		friend Expression;
 		friend class Parser;
 		friend class DependencyManager;
+		friend class VM;
+		friend class BytecodeCompiler;
 		std::vector<Module> modules;
 		std::vector<Module> optionalModules;
 		ScopePtr globalScope = std::make_shared<Scope>(this);
@@ -196,6 +229,20 @@ namespace IkigaiScript {
 		bool readLine(std::string_view text, ScopePtr scope);
 		bool evaluate(std::string_view script, ScopePtr scope);
 		bool evaluateFile(const std::string& path, ScopePtr scope);
+		// Parse-only: returns a compiled Chunk without executing top-level code.
+		// Functions defined in the script are compiled to bytecode in the Chunk.
+		using CompiledScriptRef = ChunkRef;
+		CompiledScriptRef compileScript(std::string_view source);
+		CompiledScriptRef compileScriptFile(const std::string& path);
+		// Serialize / deserialize a compiled Chunk to/from a binary IKBC blob.
+		bool saveCompiledScript(const Chunk& chunk, const std::string& path);
+		std::string serializeCompiledScript(const Chunk& chunk);
+		CompiledScriptRef loadCompiledScriptFile(const std::string& path);
+		CompiledScriptRef deserializeCompiledScript(std::string_view data);
+		// Execute a previously compiled/deserialized Chunk via the VM.
+		ValuePtr runCompiledScript(CompiledScriptRef chunk, ScopePtr scope = nullptr);
+		ValuePtr runCompiledScriptFile(const std::string& path, ScopePtr scope = nullptr);
+		ValuePtr runCompiledScriptString(std::string_view data, ScopePtr scope = nullptr);
 		void clearState();
 		IkigaiScriptInterpreter(ModulePrivilegeFlags priv);
 		IkigaiScriptInterpreter(ModulePrivilege priv);

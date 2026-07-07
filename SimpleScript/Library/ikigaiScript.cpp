@@ -2032,7 +2032,7 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 					closeScope(coro->scope);
 					break;
 				}
-				else if (sub->type == ExpressionType::Yeld) {
+				else if (sub->type == ExpressionType::Yield) {
 					returnVal = getValue(sub, coro->scope, coro->classs);
 					coro->pc = i + 1;
 					coro->state = TaskState::Suspended;
@@ -2048,7 +2048,7 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 						closeScope(coro->scope);
 						break;
 					}
-					if (result->type == ExpressionType::Yeld) {
+					if (result->type == ExpressionType::Yield) {
 						returnVal = static_cast<ValueNode*>(result)->value;
 						coro->pc = i + 1;
 						coro->state = TaskState::Suspended;
@@ -2057,7 +2057,7 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 					}
 				}
 			}
-			// If we walked off the end without Return/Yeld, the coro is done
+			// If we walked off the end without Return/Yield, the coro is done
 			if (coro->state == TaskState::Running || coro->state == TaskState::Created) {
 				coro->state = TaskState::Completed;
 				if (!coro->result) coro->result = std::make_shared<Value>();
@@ -2069,6 +2069,21 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 			throw;
 		}
 		return returnVal ? returnVal : std::make_shared<Value>();
+	}
+	case FunctionBodyType::Bytecode: {
+		// Bytecode coro: delegate to VM resume path.
+		if (!vm) vm = std::make_unique<VM>(this);
+		try {
+			return vm->resumeCoro(coro);
+		} catch (YieldSignal& ys) {
+			coro->pc       = ys.savedIp;
+			coro->state    = TaskState::Suspended;
+			coro->suspendPayload = ys.payload;
+			return ys.payload;
+		} catch (...) {
+			coro->state = TaskState::Cancelled;
+			throw;
+		}
 	}
 	default: throw Exception("Malformed syntax: unexpected token");
 	}
@@ -2379,6 +2394,12 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 		auto ret = get<ClassLambda>(fnc->body)(classs, scope, args);
 		closeScope(scope);
 		return ret;
+	}
+	case FunctionBodyType::Bytecode: {
+		// Compiled bytecode path: delegate to the stack VM.
+		if (!vm) vm = std::make_unique<VM>(this);
+		auto& bfn = get<BytecodeFunctionRef>(fnc->body);
+		return vm->runFunction(bfn, scope, args, classs);
 	}
 	}
 
@@ -2816,8 +2837,8 @@ BlockResult IkigaiScriptInterpreter::needsToReturn(ExpressionPtr exp, ScopePtr s
 	if (exp->type == ExpressionType::Return) {
 		return {LoopInterupt::None, getValue(exp, scope, classs), nullptr, nullptr};
 	}
-	if (exp->type == ExpressionType::Yeld) {
-		// Direct top-level yeld node: evaluate and return as yeldReturn
+	if (exp->type == ExpressionType::Yield) {
+		// Direct top-level yield node: evaluate and return as yieldReturn
 		auto val = getValue(exp, scope, classs);
 		return {LoopInterupt::None, nullptr, val, nullptr};
 	}
@@ -2833,7 +2854,7 @@ BlockResult IkigaiScriptInterpreter::needsToReturn(ExpressionPtr exp, ScopePtr s
 			auto val = static_cast<ValueNode*>(result)->value;
 			return {LoopInterupt::None, std::move(val), nullptr, nullptr};
 		}
-		if (result->type == ExpressionType::Yeld) {
+		if (result->type == ExpressionType::Yield) {
 			auto val = static_cast<ValueNode*>(result)->value;
 			return {LoopInterupt::None, nullptr, std::move(val), nullptr};
 		}
@@ -2856,7 +2877,7 @@ BlockResult IkigaiScriptInterpreter::needsToReturn(const std::vector<ExpressionP
 		}
 		auto returnVal = needsToReturn(sub, scope, classs);
 		if (returnVal.explicitReturn ||
-		    returnVal.yeldReturn     ||
+		    returnVal.yieldReturn     ||
 		    returnVal.interrupt == LoopInterupt::Break ||
 		    returnVal.interrupt == LoopInterupt::Continue) {
 			return returnVal;
@@ -2908,6 +2929,15 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		}
 
 		auto val = getValue(def->defineExpression, scope, classs);
+		// Declaration without initializer: var n: Int; / var a: Int?;
+		if (!val && !def->defineExpression) {
+			val = std::make_shared<Value>();
+			TypeDescriptor td = def->typeDescriptor;
+			td.isInit = false;
+			val->typeDescriptor = td;
+			scope->variables[def->name] = val;
+			return arena.make<ValueNode>(val);
+		}
 		// For live declarations, copy the value to prevent aliasing the guard source's Value* address.
 		// This avoids registering the source variable's address as the live target in DependencyManager.
 		// Regular `var b = a;` intentionally shares the same Value object (reference semantics).
@@ -2972,7 +3002,15 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			if (!td.subtype2 && val->typeDescriptor.subtype2) td.subtype2 = val->typeDescriptor.subtype2;
 		}
 		td.isInit = true;
-		val->typeDescriptor = td;
+		if (td.isNullable && val->getType() == Type::Null) {
+			// Nullable slot holding null: keep runtime type Null, preserve owner flags.
+			val->typeDescriptor.isNullable = td.isNullable;
+			val->typeDescriptor.isConst = td.isConst;
+			val->typeDescriptor.isDynamic = td.isDynamic;
+			val->typeDescriptor.isInit = true;
+		} else {
+			val->typeDescriptor = td;
+		}
 		
 		if (auto it = scope->variables.find(def->name); it != scope->variables.end()) {
 			*(it->second) = *val;
@@ -3124,9 +3162,9 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	case ExpressionType::Return:
 		return arena.make<ValueNode>(getValue(static_cast<Return*>(exp)->expression, scope, classs));
 		break;
-	case ExpressionType::Yeld:
-		// Return a ValueNode tagged as Yeld so callCoro and needsToReturn can detect it
-		return arena.make<ValueNode>(getValue(static_cast<Yeld*>(exp)->expression, scope, classs), ExpressionType::Yeld);
+	case ExpressionType::Yield:
+		// Return a ValueNode tagged as Yield so callCoro and needsToReturn can detect it
+		return arena.make<ValueNode>(getValue(static_cast<Yield*>(exp)->expression, scope, classs), ExpressionType::Yield);
 		break;
 	case ExpressionType::FunctionCall:
 	{
@@ -3233,12 +3271,12 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			return getValue(loopexp->testExpression, scope, classs)->getBool();
 		};
 
-		ValuePtr yeldVal = nullptr;
-		while (returnVal == nullptr && yeldVal == nullptr && _getValue()) {
+		ValuePtr yieldVal = nullptr;
+		while (returnVal == nullptr && yieldVal == nullptr && _getValue()) {
 			size_t deferMark = scope->deferred.size();
 			auto res = needsToReturn(loopexp->subexpressions, scope, classs);
 			returnVal = res.explicitReturn;
-			yeldVal   = res.yeldReturn;
+			yieldVal   = res.yieldReturn;
 			if (res.interrupt == LoopInterupt::Break) {
 				runDefers(scope, classs, deferMark);
 				break;
@@ -3246,7 +3284,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			if (res.lastValue != nullptr) {
 				resultList.push_back(res.lastValue);
 			}
-			if (returnVal == nullptr && yeldVal == nullptr && loopexp->iterateExpression) {
+			if (returnVal == nullptr && yieldVal == nullptr && loopexp->iterateExpression) {
 				getValue(loopexp->iterateExpression, scope, classs);
 			}
 			runDefers(scope, classs, deferMark);
@@ -3255,8 +3293,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		if (returnVal) {
 			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
 		}
-		else if (yeldVal) {
-			return arena.make<ValueNode>(yeldVal, ExpressionType::Yeld);
+		else if (yieldVal) {
+			return arena.make<ValueNode>(yieldVal, ExpressionType::Yield);
 		}
 		else {
 			return arena.make<ValueNode>(std::make_shared<Value>(resultList));
@@ -3270,11 +3308,11 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		auto list = getValue(foreachExp->listExpression, scope, classs);
 		auto& subs = foreachExp->subexpressions;
 		ValuePtr returnVal = nullptr;
-		ValuePtr yeldVal   = nullptr;
+		ValuePtr yieldVal   = nullptr;
 		
 		std::vector<ValuePtr> results;
 		
-		auto shouldStop = [&]() { return checkLoopInterupt == LoopInterupt::Break || returnVal || yeldVal; };
+		auto shouldStop = [&]() { return checkLoopInterupt == LoopInterupt::Break || returnVal || yieldVal; };
 
 		auto handleIteration = [&](size_t idx, ValuePtr key, ValuePtr val) {
 			if (foreachExp->iterateNames.size() == 1) {
@@ -3297,7 +3335,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			auto r = needsToReturn(subs, scope, classs);
 			checkLoopInterupt = r.interrupt;
 			returnVal = r.explicitReturn;
-			yeldVal   = r.yeldReturn;
+			yieldVal   = r.yieldReturn;
 			if (r.lastValue) {
 				results.push_back(r.lastValue);
 			}
@@ -3360,8 +3398,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		closeScope(scope);
 		if (returnVal) {
 			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
-		} else if (yeldVal) {
-			return arena.make<ValueNode>(yeldVal, ExpressionType::Yeld);
+		} else if (yieldVal) {
+			return arena.make<ValueNode>(yieldVal, ExpressionType::Yield);
 		} else {
 			// Find the common type for the array, fallback to dynamic/untyped list if heterogeneous
 			if (!results.empty()) {
@@ -3400,7 +3438,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	case ExpressionType::IfElse:
 	{
 		ValuePtr returnVal = nullptr;
-		ValuePtr yeldVal   = nullptr;
+		ValuePtr yieldVal   = nullptr;
 		ValuePtr lastEval  = nullptr;
 		for (auto& express : static_cast<IfElse*>(exp)->states) {
 			if (express.testExpression) {
@@ -3410,7 +3448,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 				auto r = needsToReturn(express.subexpressions, scope, classs);
 				checkLoopInterupt = r.interrupt;
 				returnVal = r.explicitReturn;
-				yeldVal   = r.yeldReturn;
+				yieldVal   = r.yieldReturn;
 				lastEval  = r.lastValue;
 				closeScope(scope);
 				break;
@@ -3419,8 +3457,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		if (returnVal) {
 			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
 		}
-		if (yeldVal) {
-			return arena.make<ValueNode>(yeldVal, ExpressionType::Yeld);
+		if (yieldVal) {
+			return arena.make<ValueNode>(yieldVal, ExpressionType::Yield);
 		}
 		else if (lastEval) {
 			return arena.make<ValueNode>(lastEval, ExpressionType::Value);
@@ -3477,7 +3515,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 				checkLoopInterupt = r.interrupt;
 				closeScope(scope);
 				if (r.explicitReturn) return arena.make<ValueNode>(r.explicitReturn, ExpressionType::Return);
-				if (r.yeldReturn)     return arena.make<ValueNode>(r.yeldReturn, ExpressionType::Yeld);
+				if (r.yieldReturn)     return arena.make<ValueNode>(r.yieldReturn, ExpressionType::Yield);
 				if (r.lastValue)      return arena.make<ValueNode>(r.lastValue, ExpressionType::Value);
 				return returnDefExpr();
 			}
@@ -3620,8 +3658,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		if (r.explicitReturn) {
 			return arena.make<ValueNode>(r.explicitReturn, ExpressionType::Return);
 		}
-		else if (r.yeldReturn) {
-			return arena.make<ValueNode>(r.yeldReturn, ExpressionType::Yeld);
+		else if (r.yieldReturn) {
+			return arena.make<ValueNode>(r.yieldReturn, ExpressionType::Yield);
 		}
 		else if (r.lastValue) {
 			return arena.make<ValueNode>(r.lastValue, ExpressionType::Value);
@@ -3883,3 +3921,204 @@ IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilegeFlags priv) : al
 IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilege priv) : IkigaiScriptInterpreter(static_cast<ModulePrivilegeFlags>(priv)) {}
 IkigaiScriptInterpreter::IkigaiScriptInterpreter() : IkigaiScriptInterpreter(ModulePrivilegeFlags()) {}
 
+// ---------------------------------------------------------------------------
+// Bytecode compilation + VM execution
+// ---------------------------------------------------------------------------
+
+bool IkigaiScriptInterpreter::compileFunctionToBytecode(FunctionRef fnc) {
+    if (!fnc) return false;
+    if (fnc->forceInterpret) return false;
+    if (!fnc->genericParams.empty()) return false;  // generics: keep AST path
+    if (fnc->getBodyType() != FunctionBodyType::Subexpressions) return false;
+
+    if (!vm) vm = std::make_unique<VM>(this);
+    BytecodeCompiler compiler(this);
+    auto bfn = compiler.compileFunction(fnc);
+    if (!bfn) return false;
+
+    fnc->body = bfn;  // Replace AST body with compiled bytecode
+    return true;
+}
+
+ValuePtr IkigaiScriptInterpreter::runStatementsBytecode(
+    const std::vector<ExpressionPtr>& stmts, ScopePtr scope) {
+    if (!vm) vm = std::make_unique<VM>(this);
+    BytecodeCompiler compiler(this);
+    auto fn = compiler.compileStatements(stmts);
+    auto chunk = std::make_shared<Chunk>();
+    chunk->main = fn;
+    return vm->runChunk(chunk, scope);
+}
+
+void IkigaiScriptInterpreter::disassembleAll(std::string& out) {
+    // Gather all compiled functions from globalScope and produce a listing.
+    // Used for debugging in SCRIPT_DO_INTERNAL_PRINT builds.
+    for (auto& [name, fnc] : globalScope->functions) {
+        if (fnc && fnc->getBodyType() == FunctionBodyType::Bytecode) {
+            auto& bfn = std::get<BytecodeFunctionRef>(fnc->body);
+            if (bfn) out += disassemble(*bfn);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IkigaiScript.cpp — Compiled script I/O API
+// ---------------------------------------------------------------------------
+
+#include "bytecode/serializer.hpp"
+
+// ---------------------------------------------------------------------------
+// buildCompiledScript — collect functions from scope into a Chunk
+// ---------------------------------------------------------------------------
+
+static ChunkRef buildCompiledScript(
+    IkigaiScriptInterpreter* interp,
+    ScopePtr scope,
+    const std::vector<ExpressionPtr>& topLevel)
+{
+    auto chunk = std::make_shared<Chunk>();
+
+    // Compile every eligible script-defined function found in the scope.
+    BytecodeCompiler compiler(interp);
+    for (auto& [name, fnc] : scope->functions) {
+        if (!fnc) continue;
+        if (fnc->forceInterpret) continue;
+        if (!fnc->genericParams.empty()) continue;
+        if (fnc->getBodyType() != FunctionBodyType::Subexpressions) continue;
+
+        auto bfn = compiler.compileFunction(fnc);
+        if (!bfn) continue;
+        fnc->body = bfn;
+
+        // Store metadata needed for re-linking after deserialization.
+        bfn->argNames = fnc->argNames;
+        chunk->functions[name] = bfn;
+    }
+
+    // Compile top-level statements into the chunk's main entry point.
+    if (!topLevel.empty()) {
+        chunk->main = compiler.compileStatements(topLevel, "__main__");
+    }
+
+    return chunk;
+}
+
+// ---------------------------------------------------------------------------
+// compileScript / compileScriptFile
+// ---------------------------------------------------------------------------
+
+IkigaiScriptInterpreter::CompiledScriptRef
+IkigaiScriptInterpreter::compileScript(std::string_view source) {
+    if (!vm) vm = std::make_unique<VM>(this);
+    parser->pendingTopLevelStatements.clear();
+    parser->compileOnly = true;
+    bool failed = false;
+    try {
+        failed = parser->compile(source);
+    } catch (...) {
+        parser->compileOnly = false;
+        parser->pendingTopLevelStatements.clear();
+        throw;
+    }
+    parser->compileOnly = false;
+    if (failed) return nullptr;
+    auto chunk = buildCompiledScript(this, parser->parseScope, parser->pendingTopLevelStatements);
+    parser->pendingTopLevelStatements.clear();
+    return chunk;
+}
+
+IkigaiScriptInterpreter::CompiledScriptRef
+IkigaiScriptInterpreter::compileScriptFile(const std::string& path) {
+    if (!vm) vm = std::make_unique<VM>(this);
+    parser->pendingTopLevelStatements.clear();
+    parser->compileOnly = true;
+    bool failed = false;
+    try {
+        failed = parser->compileFile(path);
+    } catch (...) {
+        parser->compileOnly = false;
+        parser->pendingTopLevelStatements.clear();
+        throw;
+    }
+    parser->compileOnly = false;
+    if (failed) return nullptr;
+    auto chunk = buildCompiledScript(this, parser->parseScope, parser->pendingTopLevelStatements);
+    parser->pendingTopLevelStatements.clear();
+    return chunk;
+}
+
+// ---------------------------------------------------------------------------
+// bindCompiledScriptToScope — register named bytecode functions in scope
+// ---------------------------------------------------------------------------
+
+static void bindCompiledScriptToScope(IkigaiScriptInterpreter* interp,
+                                      ChunkRef chunk, ScopePtr scope) {
+    if (!chunk) return;
+    for (auto& [name, bfn] : chunk->functions) {
+        if (!bfn) continue;
+        // Find or create a Function entry in scope.
+        auto& existing = scope->functions[name];
+        if (!existing) {
+            existing = std::make_shared<Function>(name);
+        }
+        existing->argNames = bfn->argNames;
+        existing->isCoro   = bfn->isCoro;
+        existing->body     = bfn;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// runCompiledScript / runCompiledScriptFile / runCompiledScriptString
+// ---------------------------------------------------------------------------
+
+ValuePtr IkigaiScriptInterpreter::runCompiledScript(CompiledScriptRef chunk,
+                                                     ScopePtr scopeArg) {
+    if (!chunk) throw Exception("runCompiledScript: null chunk");
+    if (!vm) vm = std::make_unique<VM>(this);
+    auto scope = scopeArg ? scopeArg : globalScope;
+    bindCompiledScriptToScope(this, chunk, scope);
+    return vm->runChunk(chunk, scope);
+}
+
+ValuePtr IkigaiScriptInterpreter::runCompiledScriptFile(const std::string& path,
+                                                         ScopePtr scope) {
+    auto chunk = loadCompiledScriptFile(path);
+    return runCompiledScript(chunk, scope);
+}
+
+ValuePtr IkigaiScriptInterpreter::runCompiledScriptString(std::string_view data,
+                                                           ScopePtr scope) {
+    auto chunk = deserializeCompiledScript(data);
+    return runCompiledScript(chunk, scope);
+}
+
+// ---------------------------------------------------------------------------
+// Serialize / deserialize
+// ---------------------------------------------------------------------------
+
+std::string IkigaiScriptInterpreter::serializeCompiledScript(const Chunk& chunk) {
+    return IKBCSerializer::serialize(chunk);
+}
+
+IkigaiScriptInterpreter::CompiledScriptRef
+IkigaiScriptInterpreter::deserializeCompiledScript(std::string_view data) {
+    return IKBCSerializer::deserialize(data);
+}
+
+bool IkigaiScriptInterpreter::saveCompiledScript(const Chunk& chunk,
+                                                  const std::string& path) {
+    auto blob = IKBCSerializer::serialize(chunk);
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.write(blob.data(), static_cast<std::streamsize>(blob.size()));
+    return f.good();
+}
+
+IkigaiScriptInterpreter::CompiledScriptRef
+IkigaiScriptInterpreter::loadCompiledScriptFile(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) throw Exception("loadCompiledScriptFile: cannot open '" + path + "'");
+    std::string data((std::istreambuf_iterator<char>(f)),
+                      std::istreambuf_iterator<char>());
+    return IKBCSerializer::deserialize(data);
+}

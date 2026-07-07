@@ -239,6 +239,23 @@ ExpressionPtr Parser::parseInterpolatedString(std::string val, ScopePtr scope, C
 	return finalExpr;
 }
 
+// Read-only lookup: find a Function-typed variable in the scope chain without creating a new slot.
+// Returns the ValuePtr if found as a Function, nullptr otherwise.
+static ValuePtr tryFindCallTarget(const std::string& name, ScopePtr scope, IkigaiScriptInterpreter* interp) {
+    auto s = scope;
+    while (s) {
+        auto it = s->variables.find(name);
+        if (it != s->variables.end() && it->second && it->second->getType() == Type::Function) {
+            return it->second;
+        }
+        s = s->parent;
+    }
+    // Fall back to the functions map (for functions not stored as variables).
+    auto fn = interp->resolveFunction(name, scope);
+    if (fn) return std::make_shared<Value>(fn);
+    return nullptr;
+}
+
 // recursively build an expression tree from a list of tokens
 ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, ScopePtr scope, Class* classs) {
 	auto parseArg = [&](std::vector<std::string_view> sub) -> ExpressionPtr {
@@ -638,12 +655,24 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 						cur = root;
 					}
 				}
-				else {
-					auto funccall = interpreter->arena.make<FunctionExpression>(std::make_shared<Value>(std::string(strings[i])));
-					if (root) {
-						auto t = root->type;
-						static_cast<FunctionExpression*>(root)->subexpressions.push_back(funccall);
-						cur = static_cast<FunctionExpression*>(root)->subexpressions.back();
+			else {
+				auto fnName = std::string(strings[i]);
+				// In compile-only mode (compileScript/compileScriptFile), getExpression is called
+				// without a subsequent consolidated() pass, so function names would remain unresolved
+				// Strings. Eagerly resolve them here so the BytecodeCompiler sees the correct body type.
+				// In normal mode, consolidated() handles resolution — don't change that behaviour.
+				ValuePtr fnVal;
+				if (compileOnly) {
+					auto resolved = tryFindCallTarget(fnName, scope, interpreter);
+					fnVal = resolved ? resolved : std::make_shared<Value>(fnName);
+				} else {
+					fnVal = std::make_shared<Value>(fnName);
+				}
+				auto funccall = interpreter->arena.make<FunctionExpression>(fnVal);
+				if (root) {
+					auto t = root->type;
+					static_cast<FunctionExpression*>(root)->subexpressions.push_back(funccall);
+					cur = static_cast<FunctionExpression*>(root)->subexpressions.back();
 					}
 					else {
 						root = funccall;
@@ -941,10 +970,17 @@ void Parser::parseType(TypeDescriptor& td) {
 	}
 
 	auto desc = interpreter->checkTypeInScope(typeName, parseScope);
-	td.isDynamic = false;
-	td.type = desc.type;
-	td.subtype = desc.subtype;
-	td.subtype2 = desc.subtype2;
+	if (desc.isDynamic) {
+		td.isDynamic = true;
+		td.type = Type::Null;
+		td.subtype = std::nullopt;
+		td.subtype2 = std::nullopt;
+	} else {
+		td.isDynamic = false;
+		td.type = desc.type;
+		td.subtype = desc.subtype;
+		td.subtype2 = desc.subtype2;
+	}
 	
 	if (isContainer(td.type)) {
 		parseContainerSubtype(td);
@@ -991,10 +1027,10 @@ void Parser::parse(std::string_view token) {
 				skipEval = true;
 			}
 			if (!skipEval) {
-				interpreter->getValue(previousExpression, parseScope, nullptr);
+				evalOrCollect(previousExpression);
 			}
 			if (token == "if" && previousExpression->type == ExpressionType::IfElse) {
-				interpreter->getValue(previousExpression, parseScope, nullptr);
+				evalOrCollect(previousExpression);
 			}
 		}
 
@@ -1136,8 +1172,8 @@ void Parser::parse(std::string_view token) {
 		else if (token == "return") {
 			parseState = ParseState::ReturnLine;
 		}
-		else if (token == "yeld") {
-			parseState = ParseState::YeldLine;
+		else if (token == "yield") {
+			parseState = ParseState::YieldLine;
 		}
 		else if (token == "continue") {
 			parseState = ParseState::ContinueLine;
@@ -1419,37 +1455,37 @@ void Parser::parse(std::string_view token) {
 							}
 							std::vector<std::string_view> rhs(line.begin() + closeIdx + 2, line.end());
 							ExpressionPtr valExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
-							auto astNode = interpreter->arena.make<DestructuringAssign>(std::move(patNames), valExpr);
-							if (!currentExpression) {
-								interpreter->getValue(astNode, parseScope, nullptr);
-							} else {
-								currentExpression->push_back(astNode);
-							}
-							handledAsDestruct = true;
-						}
-					}
-				if (!handledAsDestruct) {
-					if (wasPendingLive) {
-						if (line.size() >= 3 && line[1] == "=") {
-							std::string targetName = std::string(line[0]);
-							std::vector<std::string_view> rhs(line.begin() + 2, line.end());
-							ExpressionPtr guardExpr = getExpression(std::move(rhs), parseScope, nullptr);
-							auto rebindAst = interpreter->arena.make<LiveRebind>(targetName, guardExpr);
-							if (!currentExpression) {
-								interpreter->getValue(rebindAst, parseScope, nullptr);
-							} else {
-								currentExpression->push_back(rebindAst);
-							}
+						auto astNode = interpreter->arena.make<DestructuringAssign>(std::move(patNames), valExpr);
+						if (!currentExpression) {
+							evalOrCollect(astNode);
 						} else {
-							throw Exception("Malformed live rebind syntax");
+							currentExpression->push_back(astNode);
+						}
+						handledAsDestruct = true;
+					}
+				}
+			if (!handledAsDestruct) {
+				if (wasPendingLive) {
+					if (line.size() >= 3 && line[1] == "=") {
+						std::string targetName = std::string(line[0]);
+						std::vector<std::string_view> rhs(line.begin() + 2, line.end());
+						ExpressionPtr guardExpr = getExpression(std::move(rhs), parseScope, nullptr);
+						auto rebindAst = interpreter->arena.make<LiveRebind>(targetName, guardExpr);
+						if (!currentExpression) {
+							evalOrCollect(rebindAst);
+						} else {
+							currentExpression->push_back(rebindAst);
 						}
 					} else {
-							if (!currentExpression) {
-								interpreter->getValue(line, parseScope, nullptr);
-							}
-							else {
-								currentExpression->push_back(getExpression(line, parseScope, nullptr));
-							}
+						throw Exception("Malformed live rebind syntax");
+					}
+				} else {
+						if (!currentExpression) {
+							evalOrCollect(std::move(line));
+						}
+						else {
+							currentExpression->push_back(getExpression(line, parseScope, nullptr));
+						}
 						}
 					}
 				}
@@ -1520,58 +1556,58 @@ void Parser::parse(std::string_view token) {
 					}
 				}
 				if (isDestruct) {
-					std::vector<std::string> patNames;
-					for (size_t di = 1; di < closeIdx; ++di) {
-						if (line[di] != ",") patNames.push_back(std::string(line[di]));
-					}
-					{
-						std::set<std::string> seen;
-						for (auto& n : patNames) {
-							if (n == "_") continue;
-							if (!seen.insert(n).second) throw Exception("Duplicate name '" + n + "' in destructuring pattern");
-						}
-					}
-					std::vector<std::string_view> rhs(line.begin() + closeIdx + 2, line.end());
-					ExpressionPtr valExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
-					auto astNode = interpreter->arena.make<DestructuringAssign>(std::move(patNames), valExpr);
-					if (!currentExpression) {
-						interpreter->getValue(astNode, parseScope, nullptr);
-					} else {
-						currentExpression->push_back(astNode);
-					}
-					break;
+				std::vector<std::string> patNames;
+				for (size_t di = 1; di < closeIdx; ++di) {
+					if (line[di] != ",") patNames.push_back(std::string(line[di]));
 				}
-			}
-
-			if (wasPendingLive) {
-				if (line.size() >= 3 && line[1] == "=") {
-					std::string targetName = std::string(line[0]);
-					std::vector<std::string_view> rhs(line.begin() + 2, line.end());
-					ExpressionPtr guardExpr = getExpression(std::move(rhs), parseScope, nullptr);
-					auto rebindAst = interpreter->arena.make<LiveRebind>(targetName, guardExpr);
-					if (!currentExpression) {
-						interpreter->getValue(rebindAst, parseScope, nullptr);
-					} else {
-						currentExpression->push_back(rebindAst);
+				{
+					std::set<std::string> seen;
+					for (auto& n : patNames) {
+						if (n == "_") continue;
+						if (!seen.insert(n).second) throw Exception("Duplicate name '" + n + "' in destructuring pattern");
 					}
+				}
+				std::vector<std::string_view> rhs(line.begin() + closeIdx + 2, line.end());
+				ExpressionPtr valExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
+				auto astNode = interpreter->arena.make<DestructuringAssign>(std::move(patNames), valExpr);
+				if (!currentExpression) {
+					evalOrCollect(astNode);
 				} else {
-					throw Exception("Malformed live rebind syntax");
+					currentExpression->push_back(astNode);
+				}
+				break;
+			}
+		}
+
+		if (wasPendingLive) {
+			if (line.size() >= 3 && line[1] == "=") {
+				std::string targetName = std::string(line[0]);
+				std::vector<std::string_view> rhs(line.begin() + 2, line.end());
+				ExpressionPtr guardExpr = getExpression(std::move(rhs), parseScope, nullptr);
+				auto rebindAst = interpreter->arena.make<LiveRebind>(targetName, guardExpr);
+				if (!currentExpression) {
+					evalOrCollect(rebindAst);
+				} else {
+					currentExpression->push_back(rebindAst);
 				}
 			} else {
-				if (!currentExpression) {
-					interpreter->getValue(line, parseScope, nullptr);
-				}
-				else {
-					currentExpression->push_back(getExpression(line, parseScope, nullptr));
-				}
+				throw Exception("Malformed live rebind syntax");
 			}
+		} else {
+			if (!currentExpression) {
+				evalOrCollect(std::move(line));
+			}
+			else {
+				currentExpression->push_back(getExpression(line, parseScope, nullptr));
+			}
+		}
 
-		}
-		else {
-			parseStrings.push_back(token);
-		}
-		break;
-	case ParseState::ReturnLine:
+	}
+	else {
+		parseStrings.push_back(token);
+	}
+	break;
+case ParseState::ReturnLine:
 		if (token == ";") {
 			if (currentExpression) {
 				currentExpression->push_back(interpreter->arena.make<Return>(getExpression(move(parseStrings), parseScope, nullptr)));
@@ -1582,10 +1618,10 @@ void Parser::parse(std::string_view token) {
 			parseStrings.push_back(token);
 		}
 		break;
-	case ParseState::YeldLine:
+	case ParseState::YieldLine:
 		if (token == ";") {
 			if (currentExpression) {
-				currentExpression->push_back(interpreter->arena.make<Yeld>(getExpression(move(parseStrings), parseScope, nullptr)));
+				currentExpression->push_back(interpreter->arena.make<Yield>(getExpression(move(parseStrings), parseScope, nullptr)));
 			}
 			clearParseStacks();
 		}
@@ -1871,34 +1907,27 @@ void Parser::parse(std::string_view token) {
 						}
 					}
 				}
-				if (currentExpression) {
-					currentExpression->push_back(astNode);
-				} else {
-					interpreter->getValue(astNode, parseScope, nullptr);
-				}
-				clearParseStacks();
-				break;
+			if (currentExpression) {
+				currentExpression->push_back(astNode);
+			} else {
+				evalOrCollect(astNode);
 			}
+			clearParseStacks();
+			break;
+		}
 
-			auto name = parseStrings.front();
+		auto name = parseStrings.front();
 			ExpressionPtr defineExpr = nullptr;
 			if (parseStrings.size() > 2) {
 				parseStrings.erase(parseStrings.begin()); //name
 				if (parseStrings[0] == ":") {//has type annotation
 					parseStrings.erase(parseStrings.begin()); // : before type
-					auto typeName = std::string(parseStrings[0].begin(), parseStrings[0].end());
-					auto typeDesc = interpreter->checkTypeInScope(typeName, parseScope);
-					if (typeDesc.isDynamic) {
-						tDescriptor.isDynamic = true;
-					} else {
-						tDescriptor.type = typeDesc.type;
-						tDescriptor.subtype = typeDesc.subtype;
-						tDescriptor.subtype2 = typeDesc.subtype2;
-						tDescriptor.isDynamic = false;
-					}
-				parseStrings.erase(parseStrings.begin()); // type
-				parseContainerSubtype(tDescriptor);
-			}
+					const bool keepConst = tDescriptor.isConst;
+					const bool keepDynamic = tDescriptor.isDynamic;
+					parseType(tDescriptor);
+					tDescriptor.isConst = keepConst;
+					if (keepDynamic) tDescriptor.isDynamic = true;
+				}
 			if (!parseStrings.empty() && parseStrings[0] == "=") {
 				parseStrings.erase(parseStrings.begin()); // =
 				// Only use parseInlineLambda when the ENTIRE RHS is a lambda (starts with "fun").
@@ -1926,11 +1955,10 @@ void Parser::parse(std::string_view token) {
 				currentExpression->push_back(node);
 			}
 			else {
-				auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
-				node->isLive = pendingLive;
-				auto resValue = interpreter->getValue(node, parseScope, nullptr);
-				// resValue already has typeDescriptor applied by consolidated(); nothing extra needed here
-			}
+			auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
+			node->isLive = pendingLive;
+			evalOrCollect(node);
+		}
 		if (pendingMetadata.size()) {
 			parseScope->membersMetadata[std::string(name)] = pendingMetadata;
 			pendingMetadata.clear();
@@ -2461,6 +2489,50 @@ bool Parser::evaluate(std::string_view script, ScopePtr scope) {
 	return result;
 }
 
+void Parser::evalOrCollect(ExpressionPtr stmt) {
+	if (compileOnly) {
+		if (stmt) pendingTopLevelStatements.push_back(stmt);
+	} else {
+		interpreter->getValue(stmt, parseScope, nullptr);
+	}
+}
+
+void Parser::evalOrCollect(std::vector<std::string_view> line) {
+	if (compileOnly) {
+		auto expr = getExpression(std::move(line), parseScope, nullptr);
+		if (expr) pendingTopLevelStatements.push_back(expr);
+	} else {
+		interpreter->getValue(line, parseScope, nullptr);
+	}
+}
+
+bool Parser::compile(std::string_view script) {
+	compileOnly = true;
+	bool result = evaluate(script);
+	compileOnly = false;
+	return result;
+}
+
+bool Parser::compileFile(const std::string& path) {
+	std::string s;
+	auto file = std::ifstream(path);
+	if (file) {
+		file.seekg(0, std::ios::end);
+		s.reserve(file.tellg());
+		file.seekg(0, std::ios::beg);
+		if (endswith(path, ".sh")) {
+			std::string tmp;
+			getline(file, tmp);
+		}
+		s.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+		return compile(s);
+	}
+	else {
+		printf("file: %s not found\n", path.c_str());
+		return true;
+	}
+}
+
 bool Parser::evaluateFile(const std::string& path, ScopePtr scope) {
 	auto temp = parseScope;
 	parseScope = scope;
@@ -2535,7 +2607,11 @@ bool Parser::closeCurrentExpression() {
 				&& currentExpression->type != ExpressionType::IfElse
 				&& currentExpression->type != ExpressionType::Match
 				) {
-				interpreter->getValue(currentExpression, parseScope, nullptr);
+				if (compileOnly) {
+					pendingTopLevelStatements.push_back(currentExpression);
+				} else {
+					interpreter->getValue(currentExpression, parseScope, nullptr);
+				}
 			}
 			currentExpression = nullptr;
 			return true;

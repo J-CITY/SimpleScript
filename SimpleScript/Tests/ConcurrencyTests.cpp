@@ -40,11 +40,11 @@ TEST_CASE("await: coro that returns immediately is awaited correctly", "[concurr
     REQUIRE(getVarInt(interp, "result") == 42);
 }
 
-TEST_CASE("await: coro with yeld, await drives to completion", "[concurrency][phase2]") {
+TEST_CASE("await: coro with yield, await drives to completion", "[concurrency][phase2]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro gen(n) {
-            yeld n;
+            yield n;
             return n + 1;
         };
         var t = gen(10);
@@ -99,7 +99,7 @@ TEST_CASE("race: first task wins", "[concurrency][phase3]") {
     auto interp = makeInterp();
     interp.evaluate(R"(
         coro fast() { return 1; };
-        coro slow() { yeld 0; return 2; };
+        coro slow() { yield 0; return 2; };
         var tf = fast();
         var ts = slow();
         var winner = race {
