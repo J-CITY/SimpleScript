@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # --- Library (Core Interpreter) ---
 file(GLOB CORE_SOURCES "Library/*.cpp")
-add_library(IkigaiScriptCore ${CORE_SOURCES})
+file(GLOB CONCURRENCY_SOURCES "Library/concurrency/*.cpp")
+add_library(IkigaiScriptCore ${CORE_SOURCES} ${CONCURRENCY_SOURCES})
 target_include_directories(IkigaiScriptCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- Tests ---

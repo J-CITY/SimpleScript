@@ -488,3 +488,190 @@ live var n: Int;           // Typed pending slot (uninit until rebind)
 8. **`registerLiveSlot`** (Pending path): called from `DefineVar` when `isLive && !defineExpression`. Stores a binding in Pending state with no deps or guard.
 9. **`activateBinding` / `rebindBinding`**: transition a slot to Active, set the guard expression, and trigger the first recompute. `rebindBinding` also works on plain (non-live) vars, converting them to live on the fly.
 
+---
+
+## 23. Concurrency (Cooperative Async)
+
+SimpleScript implements Verse-like cooperative async via a single-threaded scheduler.
+
+### Architecture overview
+
+```
+Script layer (primary)                 Host layer (optional)
+──────────────────────────             ──────────────────────
+coro f() { yeld …; return …; }         interp.pump(N)
+var t = f();      // → TaskRef         interp.scheduler.clear()
+await t;          // drive to done
+spawn { body }    // fire-and-forget
+sync { … }        // await all
+race  { … }       // first wins
+branch{ … }       // background child
+```
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `Library/concurrency/task.hpp` | `Task` struct, `TaskState` enum, `TaskRef`, `Coro`/`CoroRef` aliases |
+| `Library/concurrency/cancellation.hpp` | `CancellationToken` — cooperative cancel tree |
+| `Library/concurrency/scheduler.hpp/.cpp` | `ConcurrencyScheduler` — ready queue, `pump()`, `spawn()`, `suspendFor()` |
+
+### Key types
+
+```cpp
+enum class TaskState { Created, Running, Suspended, Completed, Cancelled };
+
+struct Task {
+    FunctionRef func;
+    ScopePtr    scope;           // unique coro call-frame scope
+    Class*      classs = nullptr;
+    int         pc = 0;         // program counter (expressionId)
+    TaskState   state = TaskState::Created;
+    ValuePtr    result;          // final return value
+    ValuePtr    suspendPayload;  // last yeld value
+    std::weak_ptr<Task> awaitingTask;   // child we're waiting for
+    std::weak_ptr<Task> parent;
+    std::vector<std::shared_ptr<Task>> children;
+    CancellationToken::Ptr token;
+    std::string id;              // unique scope name ("fnc__coro_N")
+};
+
+using Coro = Task;    // backward-compat alias
+using CoroRef = TaskRef;
+```
+
+### coro / yeld (existing API — upgraded)
+
+- **Unique scopes**: `callFunction` for `isCoro` now uses `fnc->name + "__coro_" + counter` (not `fnc->name`) to avoid stale frame reuse.
+- **Exception safety**: `callCoro` wraps body execution in try/catch; on exception sets `state = Cancelled` and closes scope before re-throwing.
+- **`task->result`** is stored on every `return` (and on body-exhaustion). `await` uses `task->result` to extract the completed value.
+- **Yeld propagation**: `consolidated(Yeld)` now returns `ValueNode(val, ExpressionType::Yeld)`. `needsToReturn` has a `yeldReturn` field and propagates it through `IfElse`, `Block`, `Loop`, `ForEach`, `Match` cases.
+
+### await
+
+```ss
+var t = f();           // create Task (Coro) from coro function
+var result = await t;  // run t to completion synchronously; return final value
+```
+
+- Parser: `await` keyword → `ParseState::AwaitLine`. Reads tokens until `;`, creates `AwaitExpression { taskExpr }`.
+- In `getExpression`: `await` is in the re-parse keyword list, so `var x = await t;` works.
+- `consolidated(Await)`: if task already Completed → return `task->result`. Otherwise run `callCoro(task)` until `!task->isActive()`.
+
+### spawn
+
+```ss
+spawn { body }     // block form: execute body, return last value
+spawn f(args)      // expression form (via callExpr)
+```
+
+- Parser: `spawn` keyword → `ParseState::SpawnBlock`. Expects `{` then body.
+- `consolidated(Spawn)`: block form runs body in a transient scope; expression form evaluates the call expression directly.
+- Returns the result value (MVP: no background scheduling yet; executes synchronously).
+
+### sync
+
+```ss
+var results = sync { await a; await b; };  // returns Tuple of results
+```
+
+- Parser: `sync` keyword → `ParseState::SyncBlock`. Body is a sequence of statements.
+- `consolidated(SyncBlock)`: executes each statement; if result is a Task, runs it to completion. Collects all values into a Tuple.
+
+### race
+
+```ss
+var winner = race { tf; ts; };  // first Task to complete wins
+```
+
+- Parser: `race` keyword → `ParseState::RaceBlock`.
+- `consolidated(RaceBlock)`: collects Tasks from body expressions, runs them round-robin via `callCoro` until one completes. Cancels remaining tasks. Returns winner's result.
+
+### branch
+
+```ss
+branch { body }  // fire-and-forget; body runs synchronously (MVP)
+```
+
+- MVP: runs body synchronously in a detached scope. Background scheduling is Phase 5+.
+
+### CancellationToken
+
+```cpp
+auto token  = CancellationToken::make();
+auto child  = token->makeChild();    // cancelled when parent cancels
+token->onCancel([&](){ … });         // callback (sync)
+token->cancel();
+token->isCancelled();
+```
+
+- Parent cancellation cascades to all children.
+- `Task::token` is automatically created (or inherited from parent) at spawn time.
+- Phase 4 wires token cancellation to `runDefers`.
+
+### `Function::isSuspending`
+
+`Function` has a new field `bool isSuspending = false`. Currently always equals `isCoro`. Future phases will use it for static checks: `await`/`yeld` inside non-suspending function → Exception.
+
+### `IkigaiScriptInterpreter` API
+
+| Member | Purpose |
+|--------|---------|
+| `scheduler` (public) | `ConcurrencyScheduler` instance |
+| `pump(maxSteps)` | drive up to `maxSteps` ready tasks; returns count taken |
+| `callTask(TaskRef)` | called by scheduler to execute one task step |
+| `clearState()` | also calls `scheduler.clear()` |
+
+### Invariants
+
+- **Single-threaded**: all script execution on the calling thread. No mutex on `Scope`/`Value`.
+- `coroScopes` in `Scope` is **dead code** — kept for ABI; do not use.
+- `Type::Task == Type::Coro` (enum alias, same numeric value).
+
+### Phase 5: NativeJobPool — C++ thread pool
+
+**Files:** `Library/concurrency/native_job_pool.hpp/.cpp`
+
+```cpp
+// Host setup (once, before script runs):
+interp.enableNativePool(4);          // start 4 worker threads
+interp.registerNativeJob("pathfind", [&map](const List& args) -> ValuePtr {
+    // Runs in a worker thread — NO interpreter calls here!
+    return computePath(map, args[0]->getInt(), args[1]->getInt());
+});
+
+// Script side:
+//   var t = nativeJob("pathfind", x, y);
+//   var path = await t;
+
+// Or C++ API directly:
+auto task = interp.submitNativeJob("pathfind", {makeInt(10), makeInt(20)});
+while (task->isActive()) interp.pump(0);
+```
+
+**Data flow:**
+
+```
+Main thread                          Worker threads
+────────────────────────────         ────────────────────────────
+interp.pump()
+  → nativePool->drainCompletions()   [worker 0] executes NativeJob lambda
+  → scheduler.pump()                 [worker 1] executes NativeJob lambda
+                                     ↓
+                                     completionQueue_.push({task, result})
+                                     ↑── mutex ──┘
+```
+
+**`Task::isNativeJob = true`**: `callTask()` skips native tasks; they are completed by workers. `drainCompletions()` sets `task->result`, `task->state = Completed`, and re-enqueues any parent awaiting the task.
+
+**Thread safety invariant:** `Value`/`Scope`/`Arena` are NEVER touched from worker threads. The only cross-thread data structure is `completionQueue_` (protected by `completionMutex_`).
+
+**`nativeJob("name", arg1, arg2, ...)`**: stdlib function. Submits the named job with args; returns a `TaskRef` (Type::Coro/Task) that can be `await`-ed.
+
+### Known limitations (MVP, to be resolved later)
+
+- `spawn { }` and `branch { }` execute **synchronously** (no true background scheduling).
+- `await` inside loops blocks until completion (no interleaving with scheduler).
+- No `sleep()` builtin.
+- `thread.newThread` optional module is still unsafe (data race on shared interpreter); do not use for concurrency.
+

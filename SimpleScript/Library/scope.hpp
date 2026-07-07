@@ -27,6 +27,8 @@ namespace IkigaiScript {
         std::vector<Metadata> scopeMetadata;
         std::unordered_map<std::string, std::vector<Metadata>> membersMetadata;
 
+        // DEPRECATED: coroScopes was intended for coro scope tracking but is never used.
+        // Tasks own their scope via Task::scope; this field is dead code kept for ABI stability.
         std::unordered_map<std::string, ScopePtr> coroScopes;
         std::vector<std::string> baseClasses;
         std::vector<ExpressionPtr> deferred;

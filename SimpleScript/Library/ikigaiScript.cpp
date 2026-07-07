@@ -17,6 +17,7 @@
 #include "expressions.hpp"
 #include "lexer.h"
 #include "utf8Utils.hpp"
+#include "concurrency/cancellation.hpp"
 
 using namespace IkigaiScript;
 
@@ -203,6 +204,25 @@ void IkigaiScriptInterpreter::createOptionalModules() {
 			return std::make_shared<Value>();
 		}},
 		});
+
+	// Phase 5: nativeJob("name", arg1, arg2, ...) → TaskRef
+	// Submits a registered C++ job to the NativeJobPool and returns a Task value
+	// that can be awaited.  Requires enableNativePool() + registerNativeJob() on the host.
+	newFunction("nativeJob"s, [this](const List& args) -> ValuePtr {
+		if (args.empty() || args[0]->getType() != Type::String) {
+			throw Exception("nativeJob: first argument must be the job name (String)");
+		}
+		if (!nativePool) {
+			throw Exception("nativeJob: no NativeJobPool active — call enableNativePool() first");
+		}
+		const std::string& name = args[0]->getString();
+		if (!nativePool->hasRegisteredJob(name)) {
+			throw Exception("nativeJob: unknown job '" + name + "'");
+		}
+		std::vector<ValuePtr> jobArgs(args.begin() + 1, args.end());
+		auto task = nativePool->submit(name, jobArgs);
+		return std::make_shared<Value>(task);
+	});
 
 	newModule("thread", ModulePrivilege::fileSystemRead | ModulePrivilege::experimental, {
 		{ "newThread", [this](const List& args) {
@@ -1979,14 +1999,20 @@ void each(ExpressionPtr collection, std::function<void(ExpressionPtr)> func) {
 	}
 }
 
+// Phase 1: scheduler entry point — executes one "step" of a Task
+void IkigaiScriptInterpreter::callTask(TaskRef task) {
+	if (!task || !task->isActive()) return;
+	// Native jobs are completed by NativeJobPool workers, not by the interpreter.
+	// drainCompletions() already set their state before pump() resumed them, so
+	// if we get here they should be Completed/Cancelled already. Just skip.
+	if (task->isNativeJob) return;
+	task->state = TaskState::Running;
+	// callCoro handles all execution and state transitions
+	callCoro(task);
+}
+
 ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
-	//if (!fnc->isCoro) {
-	//	throw;
-	//}
-	//if (fnc->type == FunctionType::Constructor) {
-	//	throw;
-	//}
-	if (!coro->isActive) {
+	if (!coro->isActive()) {
 		return std::make_shared<Value>();
 	}
 	switch (coro->func->getBodyType()) {
@@ -1994,41 +2020,59 @@ ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 		auto& subexpressions = std::get<std::vector<ExpressionPtr>>(coro->func->body);
 
 		ValuePtr returnVal = nullptr;
-		int startExpr = coro->expressionId;
-		for (int i = startExpr; i < subexpressions.size(); i++) {
-			auto sub = subexpressions[i];
-			if (sub->type == ExpressionType::Return) {
-				returnVal = getValue(sub, coro->scope, coro->classs);
-				coro->isActive = false;
-				closeScope(coro->scope);
-				break;
-			}
-			else if (sub->type == ExpressionType::Yeld) {
-				returnVal = getValue(sub, coro->scope, coro->classs);
-				coro->expressionId = i + 1;
-				break;
-			}
-			else {
-				auto result = consolidated(sub, coro->scope, coro->classs);
-				if (result->type == ExpressionType::Return) {
-					returnVal = static_cast<ValueNode*>(result)->value;
-					coro->isActive = false;
+		int startExpr = coro->pc;
+
+			try {
+			for (int i = startExpr; i < (int)subexpressions.size(); i++) {
+				auto sub = subexpressions[i];
+				if (sub->type == ExpressionType::Return) {
+					returnVal = getValue(sub, coro->scope, coro->classs);
+					coro->state = TaskState::Completed;
+					coro->result = returnVal;
 					closeScope(coro->scope);
 					break;
 				}
-				if (result->type == ExpressionType::Yeld) {
-					returnVal = static_cast<ValueNode*>(result)->value;
-					coro->expressionId = i + 1;
+				else if (sub->type == ExpressionType::Yeld) {
+					returnVal = getValue(sub, coro->scope, coro->classs);
+					coro->pc = i + 1;
+					coro->state = TaskState::Suspended;
+					coro->suspendPayload = returnVal;
 					break;
 				}
+				else {
+					auto result = consolidated(sub, coro->scope, coro->classs);
+					if (result->type == ExpressionType::Return) {
+						returnVal = static_cast<ValueNode*>(result)->value;
+						coro->state = TaskState::Completed;
+						coro->result = returnVal;
+						closeScope(coro->scope);
+						break;
+					}
+					if (result->type == ExpressionType::Yeld) {
+						returnVal = static_cast<ValueNode*>(result)->value;
+						coro->pc = i + 1;
+						coro->state = TaskState::Suspended;
+						coro->suspendPayload = returnVal;
+						break;
+					}
+				}
 			}
+			// If we walked off the end without Return/Yeld, the coro is done
+			if (coro->state == TaskState::Running || coro->state == TaskState::Created) {
+				coro->state = TaskState::Completed;
+				if (!coro->result) coro->result = std::make_shared<Value>();
+				closeScope(coro->scope);
+			}
+		} catch (...) {
+			coro->state = TaskState::Cancelled;
+			closeScope(coro->scope);
+			throw;
 		}
 		return returnVal ? returnVal : std::make_shared<Value>();
 	}
 	default: throw Exception("Malformed syntax: unexpected token");
 	}
 
-	//empty func
 	return std::make_shared<Value>();
 }
 
@@ -2133,8 +2177,11 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 		// get function scope
 			//TODO: if corutine try get scope else create new one
 
-		if (fnc->isCoro) { //always create scope for coro
-			scope = newScope(fnc->name, scope);
+		if (fnc->isCoro) {
+			// Use a unique scope name to avoid reusing stale coro frames
+			static std::atomic<unsigned> coroFrameId{0};
+			std::string coroFrame = fnc->name + "__coro_" + std::to_string(++coroFrameId);
+			scope = newScope(coroFrame, scope);
 		}
 		else {
 			// For member/common function calls use a unique call-frame scope to avoid
@@ -2214,13 +2261,14 @@ ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, 
 			ref = std::make_shared<Value>(vargs);
 		}
 
-		if (fnc->isCoro) {//return coro instance
-			auto coroRes = std::make_shared<Coro>();
-			coroRes->isActive = true;
-			coroRes->func = fnc;
-			coroRes->expressionId = 0;
-			coroRes->scope = scope;
+		if (fnc->isCoro) {
+			auto coroRes = std::make_shared<Task>();
+			coroRes->state  = TaskState::Suspended;
+			coroRes->func   = fnc;
+			coroRes->pc     = 0;
+			coroRes->scope  = scope;
 			coroRes->classs = classs;
+			coroRes->token  = CancellationToken::make();
 			return std::make_shared<Value>(coroRes);
 		}
 
@@ -2766,44 +2814,56 @@ TypeDescriptor IkigaiScriptInterpreter::checkTypeInScope(const std::string& name
 
 BlockResult IkigaiScriptInterpreter::needsToReturn(ExpressionPtr exp, ScopePtr scope, Class* classs) {
 	if (exp->type == ExpressionType::Return) {
-		return {LoopInterupt::None, getValue(exp, scope, classs), nullptr};
+		return {LoopInterupt::None, getValue(exp, scope, classs), nullptr, nullptr};
 	}
-	else {
+	if (exp->type == ExpressionType::Yeld) {
+		// Direct top-level yeld node: evaluate and return as yeldReturn
+		auto val = getValue(exp, scope, classs);
+		return {LoopInterupt::None, nullptr, val, nullptr};
+	}
+	{
 		auto result = consolidated(exp, scope, classs);
 		if (result->type == ExpressionType::Continue) {
-			return {LoopInterupt::Continue, nullptr, nullptr};
+			return {LoopInterupt::Continue, nullptr, nullptr, nullptr};
 		}
 		if (result->type == ExpressionType::Break) {
-			return {LoopInterupt::Break, nullptr, nullptr};
+			return {LoopInterupt::Break, nullptr, nullptr, nullptr};
 		}
 		if (result->type == ExpressionType::Return) {
 			auto val = static_cast<ValueNode*>(result)->value;
-			return {LoopInterupt::None, std::move(val), nullptr};
+			return {LoopInterupt::None, std::move(val), nullptr, nullptr};
+		}
+		if (result->type == ExpressionType::Yeld) {
+			auto val = static_cast<ValueNode*>(result)->value;
+			return {LoopInterupt::None, nullptr, std::move(val), nullptr};
 		}
 		if (result->type == ExpressionType::Value) {
 			auto val = static_cast<ValueNode*>(result)->value;
-			return {LoopInterupt::None, nullptr, std::move(val)};
+			return {LoopInterupt::None, nullptr, nullptr, std::move(val)};
 		}
 	}
-	return {LoopInterupt::None, nullptr, nullptr};
+	return {LoopInterupt::None, nullptr, nullptr, nullptr};
 }
 
 BlockResult IkigaiScriptInterpreter::needsToReturn(const std::vector<ExpressionPtr>& subexpressions, ScopePtr scope, Class* classs) {
 	ValuePtr lastVal = nullptr;
 	for (auto&& sub : subexpressions) {
 		if (sub->type == ExpressionType::Continue) {
-			return {LoopInterupt::Continue, nullptr, lastVal};
+			return {LoopInterupt::Continue, nullptr, nullptr, lastVal};
 		}
 		if (sub->type == ExpressionType::Break) {
-			return {LoopInterupt::Break, nullptr, lastVal};
+			return {LoopInterupt::Break, nullptr, nullptr, lastVal};
 		}
 		auto returnVal = needsToReturn(sub, scope, classs);
-		if (returnVal.explicitReturn || returnVal.interrupt == LoopInterupt::Break || returnVal.interrupt == LoopInterupt::Continue) {
+		if (returnVal.explicitReturn ||
+		    returnVal.yeldReturn     ||
+		    returnVal.interrupt == LoopInterupt::Break ||
+		    returnVal.interrupt == LoopInterupt::Continue) {
 			return returnVal;
 		}
 		lastVal = returnVal.lastValue;
 	}
-	return {LoopInterupt::None, nullptr, lastVal};
+	return {LoopInterupt::None, nullptr, nullptr, lastVal};
 }
 
 #include <chrono>
@@ -3065,7 +3125,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		return arena.make<ValueNode>(getValue(static_cast<Return*>(exp)->expression, scope, classs));
 		break;
 	case ExpressionType::Yeld:
-		return arena.make<ValueNode>(getValue(static_cast<Yeld*>(exp)->expression, scope, classs));
+		// Return a ValueNode tagged as Yeld so callCoro and needsToReturn can detect it
+		return arena.make<ValueNode>(getValue(static_cast<Yeld*>(exp)->expression, scope, classs), ExpressionType::Yeld);
 		break;
 	case ExpressionType::FunctionCall:
 	{
@@ -3172,10 +3233,12 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			return getValue(loopexp->testExpression, scope, classs)->getBool();
 		};
 
-		while (returnVal == nullptr && _getValue()) {
+		ValuePtr yeldVal = nullptr;
+		while (returnVal == nullptr && yeldVal == nullptr && _getValue()) {
 			size_t deferMark = scope->deferred.size();
 			auto res = needsToReturn(loopexp->subexpressions, scope, classs);
 			returnVal = res.explicitReturn;
+			yeldVal   = res.yeldReturn;
 			if (res.interrupt == LoopInterupt::Break) {
 				runDefers(scope, classs, deferMark);
 				break;
@@ -3183,7 +3246,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			if (res.lastValue != nullptr) {
 				resultList.push_back(res.lastValue);
 			}
-			if (returnVal == nullptr && loopexp->iterateExpression) {
+			if (returnVal == nullptr && yeldVal == nullptr && loopexp->iterateExpression) {
 				getValue(loopexp->iterateExpression, scope, classs);
 			}
 			runDefers(scope, classs, deferMark);
@@ -3191,6 +3254,9 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		closeScope(scope);
 		if (returnVal) {
 			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
+		}
+		else if (yeldVal) {
+			return arena.make<ValueNode>(yeldVal, ExpressionType::Yeld);
 		}
 		else {
 			return arena.make<ValueNode>(std::make_shared<Value>(resultList));
@@ -3204,9 +3270,12 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		auto list = getValue(foreachExp->listExpression, scope, classs);
 		auto& subs = foreachExp->subexpressions;
 		ValuePtr returnVal = nullptr;
+		ValuePtr yeldVal   = nullptr;
 		
 		std::vector<ValuePtr> results;
 		
+		auto shouldStop = [&]() { return checkLoopInterupt == LoopInterupt::Break || returnVal || yeldVal; };
+
 		auto handleIteration = [&](size_t idx, ValuePtr key, ValuePtr val) {
 			if (foreachExp->iterateNames.size() == 1) {
 				scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(*val);
@@ -3228,6 +3297,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			auto r = needsToReturn(subs, scope, classs);
 			checkLoopInterupt = r.interrupt;
 			returnVal = r.explicitReturn;
+			yeldVal   = r.yeldReturn;
 			if (r.lastValue) {
 				results.push_back(r.lastValue);
 			}
@@ -3238,17 +3308,17 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		if (list->getType() == Type::Map) {
 			for (auto&& in : *list->getDictionary().get()) {
 				handleIteration(idx++, std::make_shared<Value>(in.first), in.second);
-				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				if (shouldStop()) break;
 			}
 		} else if (list->getType() == Type::Set) {
 			for (auto&& in : *list->getSet().get()) {
 				handleIteration(idx++, nullptr, in);
-				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				if (shouldStop()) break;
 			}
 		} else if (list->getType() == Type::List) {
 			for (auto&& in : list->getList()) {
 				handleIteration(idx++, nullptr, in);
-				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				if (shouldStop()) break;
 			}
 		} else if (list->getType() == Type::Array) {
 			auto& arr = list->getArray();
@@ -3256,19 +3326,19 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			case Type::Int: {
 				for (auto&& in : list->getStdVector<Int>()) {
 					handleIteration(idx++, nullptr, std::make_shared<Value>(in));
-					if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+					if (shouldStop()) break;
 				}
 			} break;
 			case Type::Float: {
 				for (auto&& in : list->getStdVector<Float>()) {
 					handleIteration(idx++, nullptr, std::make_shared<Value>(in));
-					if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+					if (shouldStop()) break;
 				}
 			} break;
 			case Type::String: {
 				for (auto&& in : list->getStdVector<std::string>()) {
 					handleIteration(idx++, nullptr, std::make_shared<Value>(in));
-					if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+					if (shouldStop()) break;
 				}
 			} break;
 			default: break;
@@ -3278,18 +3348,20 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 			Int limit = rv.inclusive ? rv.end_ : rv.end_ - 1;
 			for (Int i = rv.start; i <= limit; ++i) {
 				handleIteration(idx++, nullptr, std::make_shared<Value>(i));
-				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				if (shouldStop()) break;
 			}
 		} else if (list->getType() == Type::Tuple) {
 			for (auto&& in : list->getTuple()) {
 				handleIteration(idx++, nullptr, in);
-				if (checkLoopInterupt == LoopInterupt::Break || returnVal) break;
+				if (shouldStop()) break;
 			}
 		}
 		
 		closeScope(scope);
 		if (returnVal) {
 			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
+		} else if (yeldVal) {
+			return arena.make<ValueNode>(yeldVal, ExpressionType::Yeld);
 		} else {
 			// Find the common type for the array, fallback to dynamic/untyped list if heterogeneous
 			if (!results.empty()) {
@@ -3328,7 +3400,8 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	case ExpressionType::IfElse:
 	{
 		ValuePtr returnVal = nullptr;
-		ValuePtr lastEval = nullptr;
+		ValuePtr yeldVal   = nullptr;
+		ValuePtr lastEval  = nullptr;
 		for (auto& express : static_cast<IfElse*>(exp)->states) {
 			if (express.testExpression) {
 			}
@@ -3337,13 +3410,17 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 				auto r = needsToReturn(express.subexpressions, scope, classs);
 				checkLoopInterupt = r.interrupt;
 				returnVal = r.explicitReturn;
-				lastEval = r.lastValue;
+				yeldVal   = r.yeldReturn;
+				lastEval  = r.lastValue;
 				closeScope(scope);
 				break;
 			}
 		}
 		if (returnVal) {
 			return arena.make<ValueNode>(returnVal, ExpressionType::Return);
+		}
+		if (yeldVal) {
+			return arena.make<ValueNode>(yeldVal, ExpressionType::Yeld);
 		}
 		else if (lastEval) {
 			return arena.make<ValueNode>(lastEval, ExpressionType::Value);
@@ -3400,6 +3477,7 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 				checkLoopInterupt = r.interrupt;
 				closeScope(scope);
 				if (r.explicitReturn) return arena.make<ValueNode>(r.explicitReturn, ExpressionType::Return);
+				if (r.yeldReturn)     return arena.make<ValueNode>(r.yeldReturn, ExpressionType::Yeld);
 				if (r.lastValue)      return arena.make<ValueNode>(r.lastValue, ExpressionType::Value);
 				return returnDefExpr();
 			}
@@ -3542,6 +3620,9 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		if (r.explicitReturn) {
 			return arena.make<ValueNode>(r.explicitReturn, ExpressionType::Return);
 		}
+		else if (r.yeldReturn) {
+			return arena.make<ValueNode>(r.yeldReturn, ExpressionType::Yeld);
+		}
 		else if (r.lastValue) {
 			return arena.make<ValueNode>(r.lastValue, ExpressionType::Value);
 		}
@@ -3550,14 +3631,132 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		}
 	}
 	break;
+	// -----------------------------------------------------------------------
+	// Phase 2: await / spawn
+	// -----------------------------------------------------------------------
+	case ExpressionType::Await:
+	{
+		auto* awaitExpr = static_cast<AwaitExpression*>(exp);
+		auto taskVal = getValue(awaitExpr->taskExpr, scope, classs);
+		if (!taskVal || taskVal->getType() != Type::Coro) {
+			throw Exception("'await' requires a Task value");
+		}
+		auto task = taskVal->getTask();
+		// If the task is already completed, return its result immediately
+		if (task->state == TaskState::Completed || task->state == TaskState::Cancelled) {
+			return arena.make<ValueNode>(task->result ? task->result : std::make_shared<Value>());
+		}
+		// Run the task to completion synchronously (MVP: cooperative, no scheduler needed)
+		while (task->isActive()) {
+			callCoro(task);
+		}
+		return arena.make<ValueNode>(task->result ? task->result : std::make_shared<Value>());
+	}
+	break;
+	case ExpressionType::Spawn:
+	{
+		auto* spawnExpr = static_cast<SpawnExpression*>(exp);
+		// Single-callExpr form: spawn <callable>(args)
+		if (spawnExpr->callExpr) {
+			auto taskVal = getValue(spawnExpr->callExpr, scope, classs);
+			return arena.make<ValueNode>(taskVal ? taskVal : std::make_shared<Value>());
+		}
+		// Block form: spawn { body } — wrap body in an anonymous coro-like task
+		if (!spawnExpr->subexpressions.empty()) {
+			// Execute body in a transient scope and return last value
+			auto spawnScope = newScope("spawn_body", scope);
+			auto r = needsToReturn(spawnExpr->subexpressions, spawnScope, classs);
+			closeScope(spawnScope);
+			if (r.explicitReturn) return arena.make<ValueNode>(r.explicitReturn);
+			if (r.lastValue)      return arena.make<ValueNode>(r.lastValue);
+		}
+		return arena.make<ValueNode>(std::make_shared<Value>());
+	}
+	break;
+	// -----------------------------------------------------------------------
+	// Phase 3: sync / race / branch
+	// -----------------------------------------------------------------------
+	case ExpressionType::SyncBlock:
+	{
+		// sync { stmt1; stmt2; }
+		// MVP: run each statement sequentially; if a statement produces a Task, run it to completion.
+		// Returns a list of results.
+		auto* syncExpr = static_cast<SyncBlockExpression*>(exp);
+		auto syncScope = newScope("sync_body", scope);
+		List results;
+		for (auto& sub : syncExpr->subexpressions) {
+			auto subResult = getValue(sub, syncScope, classs);
+			if (subResult && subResult->getType() == Type::Coro) {
+				auto task = subResult->getTask();
+				while (task->isActive()) callCoro(task);
+				if (task->result) results.push_back(task->result);
+			} else if (subResult) {
+				results.push_back(subResult);
+			}
+		}
+		closeScope(syncScope);
+		return arena.make<ValueNode>(std::make_shared<Value>(Value::makeTuple(results)));
+	}
+	break;
+	case ExpressionType::RaceBlock:
+	{
+		// race { spawn1; spawn2; }
+		// MVP: run each statement; first Task to complete wins, others are cancelled.
+		auto* raceExpr = static_cast<RaceBlockExpression*>(exp);
+		auto raceScope = newScope("race_body", scope);
+		std::vector<TaskRef> tasks;
+		// Collect tasks
+		for (auto& sub : raceExpr->subexpressions) {
+			auto subResult = getValue(sub, raceScope, classs);
+			if (subResult && subResult->getType() == Type::Coro) {
+				tasks.push_back(subResult->getTask());
+			}
+		}
+		closeScope(raceScope);
+		// Run tasks round-robin until first completion
+		ValuePtr winner;
+		while (!tasks.empty() && !winner) {
+			for (auto it = tasks.begin(); it != tasks.end(); ) {
+				auto& t = *it;
+				if (t->state == TaskState::Completed || t->state == TaskState::Cancelled) {
+					if (!winner && t->state == TaskState::Completed) winner = t->result;
+					it = tasks.erase(it);
+					continue;
+				}
+				callCoro(t);
+				if (t->state == TaskState::Completed) {
+					if (!winner) winner = t->result;
+					it = tasks.erase(it);
+					break;
+				}
+				++it;
+			}
+		}
+		// Cancel any remaining tasks
+		for (auto& t : tasks) {
+			if (t->token) t->token->cancel();
+			t->state = TaskState::Cancelled;
+		}
+		return arena.make<ValueNode>(winner ? winner : std::make_shared<Value>());
+	}
+	break;
+	case ExpressionType::BranchBlock:
+	{
+		// branch { body }
+		// MVP: execute body in a detached scope; fires and returns immediately.
+		// Cancel is deferred to scope exit (via deferred cancellation token in Phase 4).
+		auto* branchExpr = static_cast<BranchBlockExpression*>(exp);
+		auto branchScope = newScope("branch_body", scope);
+		// For MVP, just execute immediately (no true background scheduling yet)
+		needsToReturn(branchExpr->subexpressions, branchScope, classs);
+		closeScope(branchScope);
+		return arena.make<ValueNode>(std::make_shared<Value>());
+	}
+	break;
 	default:
 		break;
 	}
 	auto val = static_cast<ValueNode*>(exp);
-	//if (val->value->getType() == Type::Coro) {
-	//	auto coroExpr = val->value->getCoro();
-	//	return arena.make<ValueNode>(callCoro(coroExpr));
-	//}
 	return arena.make<ValueNode>(val, ExpressionType::Value);
 }
 
@@ -3644,7 +3843,36 @@ bool IkigaiScriptInterpreter::evaluate(std::string_view script, ScopePtr scope) 
 bool IkigaiScriptInterpreter::evaluateFile(const std::string& path, ScopePtr scope) { return parser->evaluateFile(path, scope); }
 void IkigaiScriptInterpreter::clearState() {
 	dependencyManager.clear();
+	scheduler.clear();
+	// Drain any pending native completions so the pool can be reused cleanly
+	if (nativePool) nativePool->drainCompletions(scheduler);
 	parser->clearState();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: NativeJobPool host API
+// ---------------------------------------------------------------------------
+
+void IkigaiScriptInterpreter::enableNativePool(size_t numThreads) {
+	if (!nativePool) {
+		nativePool = std::make_unique<NativeJobPool>(
+			numThreads > 0 ? numThreads : std::thread::hardware_concurrency());
+	}
+}
+
+void IkigaiScriptInterpreter::registerNativeJob(const std::string& name, NativeJob job) {
+	if (!nativePool) {
+		throw Exception("registerNativeJob: call enableNativePool() first");
+	}
+	nativePool->registerJob(name, std::move(job));
+}
+
+TaskRef IkigaiScriptInterpreter::submitNativeJob(const std::string& name,
+                                                  const std::vector<ValuePtr>& args) {
+	if (!nativePool) {
+		throw Exception("submitNativeJob: call enableNativePool() first");
+	}
+	return nativePool->submit(name, args);
 }
 
 IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilegeFlags priv) : allowedModulePrivileges(priv) {

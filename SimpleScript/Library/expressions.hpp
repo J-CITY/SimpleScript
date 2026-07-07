@@ -749,6 +749,82 @@ namespace IkigaiScript {
 			: Expression(ExpressionType::DestructuringAssign, par), patternNames(std::move(names)), valueExpression(valExpr) {}
 	};
 
+	// --- Phase 2: await / spawn ---
+
+	// await <expr>  — suspend current suspending-func until expr (a Task) completes
+	struct AwaitExpression : public Expression {
+		ExpressionPtr taskExpr = nullptr;
+
+		AwaitExpression(ExpressionPtr te, ExpressionPtr par = nullptr)
+			: Expression(ExpressionType::Await, par), taskExpr(te) {}
+		AwaitExpression() : Expression(ExpressionType::Await) {}
+	};
+
+	// spawn { body }  — create and enqueue a new Task; evaluates to TaskRef
+	struct SpawnExpression : public Expression {
+		std::vector<ExpressionPtr> subexpressions;
+		// Alternative: single expression form  spawn f(args)
+		ExpressionPtr callExpr = nullptr;
+
+		SpawnExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::Spawn, par) {}
+
+		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
+		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
+		std::vector<ExpressionPtr>::iterator end()   override { return subexpressions.end(); }
+		void push_back(ExpressionPtr ref) override { subexpressions.push_back(ref); }
+
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
+		}
+	};
+
+	// --- Phase 3: sync / race / branch ---
+
+	// sync { a; b; }  — await all children, return tuple of results
+	struct SyncBlockExpression : public Expression {
+		std::vector<ExpressionPtr> subexpressions;
+
+		SyncBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::SyncBlock, par) {}
+
+		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
+		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
+		std::vector<ExpressionPtr>::iterator end()   override { return subexpressions.end(); }
+		void push_back(ExpressionPtr ref) override { subexpressions.push_back(ref); }
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
+		}
+	};
+
+	// race { a; b; }  — first child to complete wins; others cancelled
+	struct RaceBlockExpression : public Expression {
+		std::vector<ExpressionPtr> subexpressions;
+
+		RaceBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::RaceBlock, par) {}
+
+		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
+		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
+		std::vector<ExpressionPtr>::iterator end()   override { return subexpressions.end(); }
+		void push_back(ExpressionPtr ref) override { subexpressions.push_back(ref); }
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
+		}
+	};
+
+	// branch { body }  — fire-and-forget: run in background; cancel on parent scope exit
+	struct BranchBlockExpression : public Expression {
+		std::vector<ExpressionPtr> subexpressions;
+
+		BranchBlockExpression(ExpressionPtr par = nullptr) : Expression(ExpressionType::BranchBlock, par) {}
+
+		ExpressionPtr back() override { return subexpressions.empty() ? nullptr : subexpressions.back(); }
+		std::vector<ExpressionPtr>::iterator begin() override { return subexpressions.begin(); }
+		std::vector<ExpressionPtr>::iterator end()   override { return subexpressions.end(); }
+		void push_back(ExpressionPtr ref) override { subexpressions.push_back(ref); }
+		void replaceChild(ExpressionPtr oldNode, ExpressionPtr newNode) override {
+			for (auto& s : subexpressions) { if (s == oldNode) s = newNode; }
+		}
+	};
+
 	struct SafeBlockExpression : public Expression {
 		std::vector<ExpressionPtr> subexpressions;
 		bool producesValue = false;

@@ -108,6 +108,7 @@ namespace IkigaiScript {
         explicit Value(Float a) { typeDescriptor = TypeDescriptor{ Type::Float, true, false, true, false }; new (&value.asFloat) Float(a); }
         explicit Value(FunctionRef a) { typeDescriptor = TypeDescriptor{ Type::Function, true, false, true, false }; new (&value.asFunction) FunctionRef(a); }
         explicit Value(CoroRef a) { typeDescriptor = TypeDescriptor{ Type::Coro, true, false, true, false }; new (&value.asCoro) CoroRef(a); }
+        // TaskRef is an alias for CoroRef so constructor above covers it
         explicit Value(void* a) { typeDescriptor = TypeDescriptor{ Type::Pointer, true, false, true, false }; new (&value.asPointer) void*(a); }
         explicit Value(std::string a) { typeDescriptor = TypeDescriptor{ Type::String, true, false, true, false }; new (&value.asString) std::string(a); }
         explicit Value(const char* a) { typeDescriptor = TypeDescriptor{ Type::String, true, false, true, false }; new (&value.asString) std::string(a); }
@@ -238,6 +239,7 @@ namespace IkigaiScript {
         Int& getInt() { return value.asInt; }
         Float& getFloat() { return value.asFloat; }
         CoroRef& getCoro() { return value.asCoro; }
+        TaskRef& getTask() { return value.asCoro; }   // alias: Task == Coro
         FunctionRef& getFunction() { return value.asFunction; }
         void*& getPointer() { return value.asPointer; }
         std::string& getString() { return value.asString; }
@@ -290,7 +292,7 @@ namespace IkigaiScript {
                 truthiness = getList().size() > 0;
                 break;
             case Type::Coro:
-                truthiness = getCoro()->isActive;
+                truthiness = getCoro()->isActive();
                 break;
             default:
                 break;

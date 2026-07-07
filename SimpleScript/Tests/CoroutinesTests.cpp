@@ -52,7 +52,7 @@ TEST_CASE("coro: is active after creation, before exhaust", "[coroutines]") {
     REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
     auto cval = getVar(interp, "c");
     REQUIRE(cval->getType() == IkigaiScript::Type::Coro);
-    REQUIRE(cval->getCoro()->isActive == true);
+    REQUIRE(cval->getCoro()->isActive() == true);
 }
 
 TEST_CASE("coro: becomes inactive after exhaustion", "[coroutines]") {
@@ -68,7 +68,7 @@ TEST_CASE("coro: becomes inactive after exhaustion", "[coroutines]") {
     )");
     REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
     auto cval = getVar(interp, "c");
-    REQUIRE(cval->getCoro()->isActive == false);
+    REQUIRE(cval->getCoro()->isActive() == false);
 }
 
 TEST_CASE("coro: multiple yeld values are correct", "[coroutines]") {
@@ -103,4 +103,99 @@ TEST_CASE("coro: truthiness while active", "[coroutines]") {
         if (c) { print("still"); } else { print("done"); }
     )");
     REQUIRE(interp.__DEBUG_OUT__ == "activedone");
+}
+
+// =============================================================================
+// Phase 0: Unique coro scopes (two instances must not share state)
+// =============================================================================
+
+TEST_CASE("coro: two instances are independent (unique scopes)", "[coroutines]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        coro counter(start) {
+            yeld start;
+            yeld start + 1;
+            return start + 2;
+        };
+        var a = counter(0);
+        var b = counter(10);
+        var a0 = a();
+        var b0 = b();
+        var a1 = a();
+        var b1 = b();
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "a0") == 0);
+    REQUIRE(getVarInt(interp, "b0") == 10);
+    REQUIRE(getVarInt(interp, "a1") == 1);
+    REQUIRE(getVarInt(interp, "b1") == 11);
+}
+
+// =============================================================================
+// Phase 0: Yeld inside a nested if block
+// =============================================================================
+
+TEST_CASE("coro: yeld inside if branch", "[coroutines]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        coro f(flag) {
+            if (flag) {
+                yeld 42;
+            }
+            return 0;
+        };
+        var c = f(true);
+        var v1 = c();
+        var v2 = c();
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "v1") == 42);
+    REQUIRE(getVarInt(interp, "v2") == 0);
+}
+
+// =============================================================================
+// Phase 0: Exception safety — coro marks itself inactive on throw
+// =============================================================================
+
+TEST_CASE("coro: exception in body marks inactive", "[coroutines]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        coro bad() {
+            yeld 1;
+            print("boom");
+        };
+        var c = bad();
+        var v = c();
+    )");
+    // First resume should return 1
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "v") == 1);
+    // Calling an exhausted coro returns null (not another crash)
+    interp.evaluate("var safe = c();");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+}
+
+// =============================================================================
+// Phase 0: Reusing coro name twice — must create separate instances
+// =============================================================================
+
+TEST_CASE("coro: same name reused creates fresh instances", "[coroutines]") {
+    auto interp = makeInterp();
+    interp.evaluate(R"(
+        coro counter(n) {
+            yeld n;
+            return n + 1;
+        };
+        var c1 = counter(5);
+        var c2 = counter(5);
+        var v1 = c1();
+        var v2 = c1();
+        var u1 = c2();
+        var u2 = c2();
+    )");
+    REQUIRE(interp.__EXEPTION__ == IkigaiScript::ExceptionType::None);
+    REQUIRE(getVarInt(interp, "v1") == 5);
+    REQUIRE(getVarInt(interp, "v2") == 6);
+    REQUIRE(getVarInt(interp, "u1") == 5);
+    REQUIRE(getVarInt(interp, "u2") == 6);
 }

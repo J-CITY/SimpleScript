@@ -476,7 +476,9 @@ ExpressionPtr Parser::getExpression(std::vector<std::string_view> strings, Scope
 				root = newExpr;
 			}
 		}
-		else if (strings[i] == "if" || strings[i] == "for" || strings[i] == "while" || strings[i] == "match") {
+		else if (strings[i] == "if" || strings[i] == "for" || strings[i] == "while" || strings[i] == "match"
+		         || strings[i] == "await" || strings[i] == "spawn"
+		         || strings[i] == "sync"  || strings[i] == "race" || strings[i] == "branch") {
 			auto oldParseScope = parseScope;
 			auto oldCurrentExpr = currentExpression;
 			auto oldParseState = parseState;
@@ -1163,6 +1165,55 @@ void Parser::parse(std::string_view token) {
 				currentExpression = interpreter->arena.make<DeferExpression>();
 			}
 		}
+		else if (token == "await") {
+			// await <expr>; — expect a ReadLine expression
+			parseStrings.clear();
+			parseState = ParseState::AwaitLine;
+		}
+		else if (token == "spawn") {
+			parseState = ParseState::SpawnBlock;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<SpawnExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<SpawnExpression>();
+			}
+		}
+		else if (token == "sync") {
+			parseState = ParseState::SyncBlock;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<SyncBlockExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<SyncBlockExpression>();
+			}
+		}
+		else if (token == "race") {
+			parseState = ParseState::RaceBlock;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<RaceBlockExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<RaceBlockExpression>();
+			}
+		}
+		else if (token == "branch") {
+			parseState = ParseState::BranchBlock;
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<BranchBlockExpression>(currentExpression);
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<BranchBlockExpression>();
+			}
+		}
 		else if (token == ">>>") {
 			parseState = ParseState::SafeBlock;
 			if (currentExpression) {
@@ -1648,6 +1699,70 @@ void Parser::parse(std::string_view token) {
 		}
 		else {
 			throw Exception("Expected '{' after '>>>'");
+		}
+		break;
+	// Phase 2: await
+	case ParseState::AwaitLine:
+		if (token == ";") {
+			if (!parseStrings.empty()) {
+				auto awaitedExpr = getExpression(parseStrings, parseScope, nullptr);
+				auto awaitNode = interpreter->arena.make<AwaitExpression>(awaitedExpr);
+				if (currentExpression) {
+					currentExpression->push_back(awaitNode);
+				}
+				else {
+					currentExpression = awaitNode;
+					closeCurrentExpression();
+				}
+			}
+			parseState = ParseState::BeginExpression;
+			clearParseStacks();
+		}
+		else {
+			parseStrings.push_back(token);
+		}
+		break;
+	// Phase 2: spawn { }
+	case ParseState::SpawnBlock:
+		if (token == "{") {
+			parseState = ParseState::BeginExpression;
+			parseScope = interpreter->newScope("__anon"s, parseScope);
+			clearParseStacks();
+		}
+		else if (token != " " && token != "\t") {
+			// Single-expression form: spawn expr;
+			parseStrings.push_back(token);
+		}
+		break;
+	// Phase 3: sync / race / branch { }
+	case ParseState::SyncBlock:
+		if (token == "{") {
+			parseState = ParseState::BeginExpression;
+			parseScope = interpreter->newScope("__anon"s, parseScope);
+			clearParseStacks();
+		}
+		else {
+			throw Exception("Expected '{' after 'sync'");
+		}
+		break;
+	case ParseState::RaceBlock:
+		if (token == "{") {
+			parseState = ParseState::BeginExpression;
+			parseScope = interpreter->newScope("__anon"s, parseScope);
+			clearParseStacks();
+		}
+		else {
+			throw Exception("Expected '{' after 'race'");
+		}
+		break;
+	case ParseState::BranchBlock:
+		if (token == "{") {
+			parseState = ParseState::BeginExpression;
+			parseScope = interpreter->newScope("__anon"s, parseScope);
+			clearParseStacks();
+		}
+		else {
+			throw Exception("Expected '{' after 'branch'");
 		}
 		break;
 	case ParseState::Decorator:

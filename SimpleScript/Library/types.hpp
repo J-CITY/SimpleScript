@@ -14,6 +14,7 @@
 
 #include "exception.h"
 #include "stringUtils.hpp"
+#include "concurrency/task.hpp"
 
 namespace IkigaiScript {
 
@@ -41,8 +42,8 @@ namespace IkigaiScript {
 			return "float";
 		case Type::Function:
 			return "function";
-        case Type::Coro:
-            return "coro";
+        case Type::Coro:  // same value as Type::Task
+            return "task";
 		case Type::Pointer:
 			return "pointer";
 		case Type::String:
@@ -93,8 +94,7 @@ namespace IkigaiScript {
 	struct Function;
 	using FunctionRef = std::shared_ptr<Function>;
 
-    struct Coro;
-    using CoroRef = std::shared_ptr<Coro>;
+    // Coro/CoroRef are now defined in concurrency/task.hpp (Task/TaskRef aliases)
 	
 	struct Array {
         Type type;
@@ -364,6 +364,7 @@ namespace IkigaiScript {
         std::optional<TypeDescriptor> returnType;
         bool variableArgsParam = false;
         bool isCoro = false;
+        bool isSuspending = false;  // true for coro/async functions (isCoro implies isSuspending)
         std::optional<TypeDescriptor> variableArgsParamType;
         std::vector<std::string> genericParams;
         std::string genericBodyRaw;
@@ -435,11 +436,6 @@ namespace IkigaiScript {
 	};
 
 
-    struct Coro {
-        FunctionRef func;
-        ScopePtr scope;
-        Class* classs = nullptr;
-        int expressionId = 0;
-        bool isActive = false;
-    };
+    // Task (was Coro) is now in concurrency/task.hpp
+    // Backward-compat: Coro = Task, CoroRef = TaskRef (defined in task.hpp)
 }

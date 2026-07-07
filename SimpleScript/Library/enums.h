@@ -63,6 +63,7 @@ namespace IkigaiScript
 		Float,
 		Function,
 		Coro,
+		Task = Coro,  // alias: Type::Task == Type::Coro during transition
 		Pointer,
 		String,
 		Array,
@@ -104,7 +105,14 @@ namespace IkigaiScript
 		DestructuringAssign,
 		Defer,
 		SafeBlock,
-		LiveRebind
+		LiveRebind,
+		// Phase 2: async/await
+		Await,
+		Spawn,
+		// Phase 3: structured concurrency
+		SyncBlock,
+		RaceBlock,
+		BranchBlock,
 	};
 
 	enum class ParseState : uint8_t {
@@ -140,7 +148,14 @@ namespace IkigaiScript
 		MatchCasePattern,
 		MatchDefault,
 		DeferBody,
-		SafeBlock
+		SafeBlock,
+		// Phase 2: await/spawn
+		AwaitLine,
+		SpawnBlock,
+		// Phase 3: structured concurrency
+		SyncBlock,
+		RaceBlock,
+		BranchBlock,
 	};
 
 	

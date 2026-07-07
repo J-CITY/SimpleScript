@@ -11,6 +11,8 @@
 #include "scope.hpp"
 #include "modules.hpp"
 #include "dependencyManager.hpp"
+#include "concurrency/scheduler.hpp"
+#include "concurrency/native_job_pool.hpp"
 
 #define TEST_MOD
 
@@ -24,7 +26,8 @@ namespace IkigaiScript {
 	struct BlockResult {
 		LoopInterupt interrupt = LoopInterupt::None;
 		ValuePtr explicitReturn = nullptr;
-		ValuePtr lastValue = nullptr;
+		ValuePtr yeldReturn     = nullptr;  // Phase 0: Yeld propagation through nested blocks
+		ValuePtr lastValue      = nullptr;
 	};
 
 	class IkigaiScriptInterpreter {
@@ -32,6 +35,13 @@ namespace IkigaiScript {
 		std::atomic_bool data_is_ready_{};
 
 		inline static uint64_t currentLine = 0;
+
+		// Phase 1: ConcurrencyScheduler
+		ConcurrencyScheduler scheduler;
+
+		// Phase 5: optional native job pool (created via enableNativePool)
+		std::unique_ptr<NativeJobPool> nativePool;
+
 	private:
 		friend Expression;
 		friend class Parser;
@@ -109,6 +119,29 @@ namespace IkigaiScript {
 		void registerExport(ScopePtr scope, const std::string& name);
 		ValuePtr callFunction(const std::string& name, ScopePtr scope, const List& args);
 		ValuePtr callCoro(CoroRef coro);
+		// Phase 1: Task-based execution (called by the scheduler)
+		void callTask(TaskRef task);
+		// Phase 1: Pump the scheduler — run up to maxSteps ready tasks.
+		// Also drains native-job completions if a NativeJobPool is active.
+		int pump(int maxSteps = -1) {
+			if (nativePool) nativePool->drainCompletions(scheduler);
+			return scheduler.pump(this, maxSteps);
+		}
+
+		// Phase 5: Start a NativeJobPool with the given number of worker threads.
+		// Call this once during host setup, before running scripts.
+		// numThreads == 0 → std::thread::hardware_concurrency()
+		void enableNativePool(size_t numThreads = 0);
+
+		// Phase 5: Register a named C++ job that scripts can invoke via nativeJob().
+		// Must be called after enableNativePool().
+		// The lambda runs in a worker thread — do NOT call back into the interpreter.
+		void registerNativeJob(const std::string& name, NativeJob job);
+
+		// Phase 5: Submit a native job programmatically (returns a TaskRef/CoroRef).
+		// Equivalent to what the stdlib nativeJob() function does.
+		TaskRef submitNativeJob(const std::string& name,
+		                        const std::vector<ValuePtr>& args = {});
 		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs = nullptr);
 		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, Class* classs = nullptr) { return callFunction(fnc, scope, args, {}, classs); }
 		ValuePtr callFunction(FunctionRef fnc, ScopePtr scope, const List& args, ClassRef classs) { return callFunction(fnc, scope, args, {}, classs.get()); }
