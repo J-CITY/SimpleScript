@@ -151,6 +151,15 @@ std::vector<std::string_view> Lexer::Tokenize(std::string_view input) {
 					lpos = pos;
 					continue;
 				}
+				else if (input[pos] == '/' && input[pos + 1] == '*') {
+					auto endComment = input.find("*/", pos + 2);
+					if (endComment == std::string_view::npos) {
+						throw Exception("Unterminated multiline comment");
+					}
+					pos = endComment + 2;
+					lpos = pos;
+					continue;
+				}
 				else if (input[pos] == '>' && pos + 2 < input.size() && input[pos + 1] == '>' && input[pos + 2] == '>') {
 					stride = 3;
 				}
@@ -322,6 +331,15 @@ namespace {
 						if (input[pos] == '\n') break;
 						pos++;
 					}
+					return true;
+				}
+				else if (input[startPos] == '/' && input[startPos + 1] == '*') {
+					isComment = true;
+					auto endComment = input.find("*/", pos);
+					if (endComment == std::string_view::npos) {
+						throw Exception("Unterminated multiline comment");
+					}
+					pos = endComment + 2;
 					return true;
 				}
 			}

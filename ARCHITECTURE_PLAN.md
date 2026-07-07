@@ -45,8 +45,6 @@
 2. **Обновление AST**: Меняем `std::shared_ptr<Expression>` на `Expression*` (через Arena placement new).
 3. **Visual Editor**: Адаптируем `VisualNodes.cpp`, создаем Арену внутри редактора нод.
 -----------------------------------
-- многострочные комментарии 
-- live переменные
 - concurrency
 
 Low priority
