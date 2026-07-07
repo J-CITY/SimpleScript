@@ -377,6 +377,7 @@ namespace IkigaiScript {
 		std::vector<std::string> patternNames; // non-empty → tuple destructuring pattern
 		ExpressionPtr defineExpression = nullptr;
 		TypeDescriptor typeDescriptor;
+		bool isLive = false;
 
 		DefineVar(ExpressionPtr par = nullptr) : Expression(ExpressionType::DefineVar, par) {}
 		DefineVar(const std::string& n, ExpressionPtr defExpr = nullptr, ExpressionPtr par = nullptr) :
@@ -385,6 +386,14 @@ namespace IkigaiScript {
 			Expression(ExpressionType::DefineVar, par) , name(n), defineExpression(defExpr), typeDescriptor(td) {}
 		DefineVar(std::vector<std::string> names, ExpressionPtr defExpr, const TypeDescriptor& td, ExpressionPtr par = nullptr) :
 			Expression(ExpressionType::DefineVar, par), patternNames(std::move(names)), defineExpression(defExpr), typeDescriptor(td) {}
+	};
+
+	struct LiveRebind : public Expression {
+		std::string targetName;
+		ExpressionPtr guardExpr = nullptr;
+
+		LiveRebind(const std::string& target, ExpressionPtr guard, ExpressionPtr par = nullptr)
+			: Expression(ExpressionType::LiveRebind, par), targetName(target), guardExpr(guard) {}
 	};
 
 	struct NamedArgumentExpression : public Expression {

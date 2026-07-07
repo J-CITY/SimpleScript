@@ -523,6 +523,13 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 			if (!args[1]->typeDescriptor.isInit) {
 				throw Exception("Use not init variable in expression");
 			}
+			// Block direct assignment to an active live variable.
+			if (!dependencyManager.isSuppressed()) {
+				auto* lb = dependencyManager.getLiveBinding(VarSlot{args[0].get()});
+				if (lb && lb->state == LiveBindingState::Active) {
+					throw Exception("Cannot assign directly to live variable; use `live x = expr` to rebind");
+				}
+			}
 			// For type-locked variables (isInit && !isDynamic), use strict type comparison.
 			// Only Float←Int upcast is allowed. Bool←Int coercion disallowed for assignment.
 			if (args[0]->typeDescriptor.isInit && !args[0]->typeDescriptor.isDynamic) {
@@ -554,6 +561,11 @@ void IkigaiScriptInterpreter::createStandardLibrary() {
 				args[0]->typeDescriptor.subtype = ownerTd.subtype;
 				args[0]->typeDescriptor.subtype2 = ownerTd.subtype2;
 			}
+			
+			if (!dependencyManager.isSuppressed()) {
+				dependencyManager.onVariableChanged(VarSlot{args[0].get()});
+			}
+			
 			return args[0];
 		}},
 
@@ -2416,6 +2428,9 @@ ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, Scop
 	while (scope) {
 		auto iter = scope->variables.find(name);
 		if (iter != scope->variables.end()) {
+			if (dependencyManager.isCollecting()) {
+				dependencyManager.recordRead(VarSlot{iter->second.get()});
+			}
 			return iter->second;
 		}
 		else {
@@ -2426,11 +2441,18 @@ ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, Scop
 		for (auto m : modules) {
 			auto iter = m.scope->variables.find(name);
 			if (iter != m.scope->variables.end()) {
+				if (dependencyManager.isCollecting()) {
+					dependencyManager.recordRead(VarSlot{iter->second.get()});
+				}
 				return iter->second;
 			}
 		}
 	}
-	return initialScope->insertVar(name, std::make_shared<Value>());
+	auto& ret = initialScope->insertVar(name, std::make_shared<Value>());
+	if (dependencyManager.isCollecting()) {
+		dependencyManager.recordRead(VarSlot{ret.get()});
+	}
+	return ret;
 }
 
 ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, Class* classs, ScopePtr scope) {
@@ -2457,10 +2479,16 @@ ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& na
 				while (s && s != scope) {
 					if (s->isTransactionScope) {
 						s->variables[name] = std::make_shared<Value>(*iter->second);
+						if (dependencyManager.isCollecting()) {
+							dependencyManager.recordRead(VarSlot{s->variables[name].get()});
+						}
 						return s->variables[name];
 					}
 					s = s->parent;
 				}
+			}
+			if (dependencyManager.isCollecting()) {
+				dependencyManager.recordRead(VarSlot{iter->second.get()});
 			}
 			return iter->second;
 		}
@@ -2475,9 +2503,15 @@ ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& na
 			while (s) {
 				if (s->isTransactionScope) {
 					s->variables[name] = std::make_shared<Value>(*iter->second);
+					if (dependencyManager.isCollecting()) {
+						dependencyManager.recordRead(VarSlot{s->variables[name].get()});
+					}
 					return s->variables[name];
 				}
 				s = s->parent;
+			}
+			if (dependencyManager.isCollecting()) {
+				dependencyManager.recordRead(VarSlot{iter->second.get()});
 			}
 			return iter->second;
 		}
@@ -2485,11 +2519,19 @@ ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& na
 	auto s = initialScope;
 	while (s) {
 		if (s->isTransactionScope) {
-			return s->insertVar(name, std::make_shared<Value>());
+			auto& ret = s->insertVar(name, std::make_shared<Value>());
+			if (dependencyManager.isCollecting()) {
+				dependencyManager.recordRead(VarSlot{ret.get()});
+			}
+			return ret;
 		}
 		s = s->parent;
 	}
-	return initialScope->insertVar(name, std::make_shared<Value>());
+	auto& ret = initialScope->insertVar(name, std::make_shared<Value>());
+	if (dependencyManager.isCollecting()) {
+		dependencyManager.recordRead(VarSlot{ret.get()});
+	}
+	return ret;
 }
 
 ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& name, Class* classs, ScopePtr scope) {
@@ -2507,12 +2549,14 @@ void IkigaiScriptInterpreter::commitTransaction(ScopePtr txScope) {
 	for (auto& [name, val] : txScope->variables) {
 		auto parentScope = txScope->parent;
 		bool found = false;
+		Value* notifyVal = nullptr;
 		while (parentScope) {
 			auto iter = parentScope->variables.find(name);
 			if (iter != parentScope->variables.end()) {
 				*iter->second = *val;
 				iter->second->typeDescriptor = val->typeDescriptor;
 				found = true;
+				notifyVal = iter->second.get();
 				break;
 			}
 			parentScope = parentScope->parent;
@@ -2524,9 +2568,13 @@ void IkigaiScriptInterpreter::commitTransaction(ScopePtr txScope) {
 					*iter->second = *val;
 					iter->second->typeDescriptor = val->typeDescriptor;
 					found = true;
+					notifyVal = iter->second.get();
 					break;
 				}
 			}
+		}
+		if (notifyVal && !dependencyManager.isSuppressed()) {
+			dependencyManager.onVariableChanged(VarSlot{notifyVal});
 		}
 	}
 }
@@ -2782,7 +2830,28 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 	switch (exp->type) {
 	case ExpressionType::DefineVar: {
 		auto def = static_cast<DefineVar*>(exp);
+
+		// --- Pending live slot: live var x; / live var n: Int; / live dynamic d; ---
+		if (def->isLive && !def->defineExpression && def->patternNames.empty()) {
+			TypeDescriptor td = def->typeDescriptor;
+			td.isInit = false;
+			ValuePtr val;
+			if (auto it = scope->variables.find(def->name); it != scope->variables.end()) {
+				val = it->second;
+			} else {
+				val = std::make_shared<Value>();
+				val->typeDescriptor = td;
+				scope->variables[def->name] = val;
+			}
+			dependencyManager.registerLiveSlot(VarSlot{val.get()}, scope, td, td.isDynamic);
+			return arena.make<ValueNode>(val);
+		}
+
 		auto val = getValue(def->defineExpression, scope, classs);
+		// For live declarations, copy the value to prevent aliasing the guard source's Value* address.
+		// This avoids registering the source variable's address as the live target in DependencyManager.
+		// Regular `var b = a;` intentionally shares the same Value object (reference semantics).
+		if (def->isLive && val) val = std::make_shared<Value>(*val);
 
 		// --- Tuple destructuring: var (a, b) = expr ---
 		if (!def->patternNames.empty()) {
@@ -2844,10 +2913,49 @@ ExpressionPtr IkigaiScriptInterpreter::consolidated(ExpressionPtr exp, ScopePtr 
 		}
 		td.isInit = true;
 		val->typeDescriptor = td;
-		scope->variables[def->name] = val;
+		
+		if (auto it = scope->variables.find(def->name); it != scope->variables.end()) {
+			*(it->second) = *val;
+			it->second->typeDescriptor = val->typeDescriptor;
+			val = it->second;
+			// For live vars, activateBinding will handle the initial recompute — no extra notify.
+			if (!def->isLive) {
+				dependencyManager.onVariableChanged(VarSlot{val.get()});
+			}
+		} else {
+			scope->variables[def->name] = val;
+		}
+		
+		if (def->isLive) {
+			dependencyManager.activateBinding(VarSlot{val.get()}, def->defineExpression, scope, val->typeDescriptor, val->typeDescriptor.isDynamic);
+		}
 		return arena.make<ValueNode>(val);
 	}
 		break;
+	case ExpressionType::LiveRebind: {
+		auto rebind = static_cast<LiveRebind*>(exp);
+		// Resolve target without auto-creating an uninit slot if not found.
+		ValuePtr* found = nullptr;
+		{
+			auto s = scope;
+			while (s) {
+				auto it = s->variables.find(rebind->targetName);
+				if (it != s->variables.end()) { found = &it->second; break; }
+				s = s->parent;
+			}
+		}
+		if (!found) {
+			for (auto& m : modules) {
+				auto it = m.scope->variables.find(rebind->targetName);
+				if (it != m.scope->variables.end()) { found = &it->second; break; }
+			}
+		}
+		if (!found) {
+			throw Exception("Live rebind: variable '" + rebind->targetName + "' not found in scope");
+		}
+		dependencyManager.rebindBinding(VarSlot{found->get()}, rebind->guardExpr, scope);
+		return arena.make<ValueNode>(*found);
+	}
 	case ExpressionType::ResolveVar:
 		return arena.make<ValueNode>(resolveVariable(static_cast<ResolveVar*>(exp)->name, scope));
 	case ExpressionType::Continue:
@@ -3534,7 +3642,10 @@ bool IkigaiScriptInterpreter::readLine(std::string_view text, ScopePtr scope) { 
 bool IkigaiScriptInterpreter::readLine(std::string_view text) { return parser->readLine(text); }
 bool IkigaiScriptInterpreter::evaluate(std::string_view script, ScopePtr scope) { return parser->evaluate(script, scope); }
 bool IkigaiScriptInterpreter::evaluateFile(const std::string& path, ScopePtr scope) { return parser->evaluateFile(path, scope); }
-void IkigaiScriptInterpreter::clearState() { parser->clearState(); }
+void IkigaiScriptInterpreter::clearState() {
+	dependencyManager.clear();
+	parser->clearState();
+}
 
 IkigaiScriptInterpreter::IkigaiScriptInterpreter(ModulePrivilegeFlags priv) : allowedModulePrivileges(priv) {
 	parser = new Parser(this);

@@ -1001,6 +1001,9 @@ void Parser::parse(std::string_view token) {
 		if (token == "@") {
 			parseState = ParseState::Decorator;
 		}
+		else if (token == "live") {
+			pendingLive = true;
+		}
 		else if (token == "fun") {
 			parseState = ParseState::DefineFunc;
 		}
@@ -1338,6 +1341,7 @@ void Parser::parse(std::string_view token) {
 				// Implicit end-of-statement before '}': evaluate pending tokens then close scope
 				if (!parseStrings.empty()) {
 					auto line = move(parseStrings);
+					bool wasPendingLive = pendingLive;
 					clearParseStacks();
 					bool handledAsDestruct = false;
 					// Check for destructuring assignment: (a, b, _) = expr
@@ -1373,12 +1377,28 @@ void Parser::parse(std::string_view token) {
 							handledAsDestruct = true;
 						}
 					}
-					if (!handledAsDestruct) {
-						if (!currentExpression) {
-							interpreter->getValue(line, parseScope, nullptr);
+				if (!handledAsDestruct) {
+					if (wasPendingLive) {
+						if (line.size() >= 3 && line[1] == "=") {
+							std::string targetName = std::string(line[0]);
+							std::vector<std::string_view> rhs(line.begin() + 2, line.end());
+							ExpressionPtr guardExpr = getExpression(std::move(rhs), parseScope, nullptr);
+							auto rebindAst = interpreter->arena.make<LiveRebind>(targetName, guardExpr);
+							if (!currentExpression) {
+								interpreter->getValue(rebindAst, parseScope, nullptr);
+							} else {
+								currentExpression->push_back(rebindAst);
+							}
+						} else {
+							throw Exception("Malformed live rebind syntax");
 						}
-						else {
-							currentExpression->push_back(getExpression(line, parseScope, nullptr));
+					} else {
+							if (!currentExpression) {
+								interpreter->getValue(line, parseScope, nullptr);
+							}
+							else {
+								currentExpression->push_back(getExpression(line, parseScope, nullptr));
+							}
 						}
 					}
 				}
@@ -1427,9 +1447,10 @@ void Parser::parse(std::string_view token) {
 			}
 
 
-			auto line = move(parseStrings);
-			clearParseStacks();
-			// we clear before evaluating lines so any exceptions can clear the offending code
+		auto line = move(parseStrings);
+		bool wasPendingLive = pendingLive;
+		clearParseStacks();
+		// we clear before evaluating lines so any exceptions can clear the offending code
 
 			// Check for destructuring assignment: (a, b, _) = expr
 			{
@@ -1471,11 +1492,27 @@ void Parser::parse(std::string_view token) {
 				}
 			}
 
-			if (!currentExpression) {
-				interpreter->getValue(line, parseScope, nullptr);
-			}
-			else {
-				currentExpression->push_back(getExpression(line, parseScope, nullptr));
+			if (wasPendingLive) {
+				if (line.size() >= 3 && line[1] == "=") {
+					std::string targetName = std::string(line[0]);
+					std::vector<std::string_view> rhs(line.begin() + 2, line.end());
+					ExpressionPtr guardExpr = getExpression(std::move(rhs), parseScope, nullptr);
+					auto rebindAst = interpreter->arena.make<LiveRebind>(targetName, guardExpr);
+					if (!currentExpression) {
+						interpreter->getValue(rebindAst, parseScope, nullptr);
+					} else {
+						currentExpression->push_back(rebindAst);
+					}
+				} else {
+					throw Exception("Malformed live rebind syntax");
+				}
+			} else {
+				if (!currentExpression) {
+					interpreter->getValue(line, parseScope, nullptr);
+				}
+				else {
+					currentExpression->push_back(getExpression(line, parseScope, nullptr));
+				}
 			}
 
 		}
@@ -1711,6 +1748,7 @@ void Parser::parse(std::string_view token) {
 				std::vector<std::string_view> rhs(parseStrings.begin() + pi, parseStrings.end());
 				ExpressionPtr defineExpr = rhs.empty() ? nullptr : getExpression(std::move(rhs), parseScope, nullptr);
 				auto astNode = interpreter->arena.make<DefineVar>(std::move(patNames), defineExpr, tDescriptor);
+				astNode->isLive = pendingLive;
 				if (nextStatementIsExported) {
 					for (auto& n : astNode->patternNames) {
 						if (n != "_") {
@@ -1743,9 +1781,10 @@ void Parser::parse(std::string_view token) {
 						tDescriptor.subtype2 = typeDesc.subtype2;
 						tDescriptor.isDynamic = false;
 					}
-					parseStrings.erase(parseStrings.begin()); // type
-					parseContainerSubtype(tDescriptor);
-				}
+				parseStrings.erase(parseStrings.begin()); // type
+				parseContainerSubtype(tDescriptor);
+			}
+			if (!parseStrings.empty() && parseStrings[0] == "=") {
 				parseStrings.erase(parseStrings.begin()); // =
 				// Only use parseInlineLambda when the ENTIRE RHS is a lambda (starts with "fun").
 				// For nested lambdas like map(arr, fun(...){...}), use getExpression which
@@ -1758,15 +1797,23 @@ void Parser::parse(std::string_view token) {
 					parseLambda = 0;
 					defineExpr = getExpression(std::move(parseStrings), parseScope, nullptr);
 				}
+			} else {
+				// No initializer: var n: Int; — defineExpr stays nullptr (uninit slot).
+				parseLambda = 0;
+			}
 			}
 			if (nextStatementIsExported) {
 				interpreter->registerExport(parseScope, std::string(name));
 			}
 			if (currentExpression) {
-				currentExpression->push_back(interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor));
+				auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
+				node->isLive = pendingLive;
+				currentExpression->push_back(node);
 			}
 			else {
-				auto resValue = interpreter->getValue(interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor), parseScope, nullptr);
+				auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
+				node->isLive = pendingLive;
+				auto resValue = interpreter->getValue(node, parseScope, nullptr);
 				// resValue already has typeDescriptor applied by consolidated(); nothing extra needed here
 			}
 		if (pendingMetadata.size()) {
@@ -2340,6 +2387,7 @@ void Parser::clearParseStacks() {
 	parseLambdaBrakets = 0;
 	parseLambda = 0;
 	nextStatementIsExported = false;
+	pendingLive = false;
 }
 
 bool Parser::closeCurrentExpression() {

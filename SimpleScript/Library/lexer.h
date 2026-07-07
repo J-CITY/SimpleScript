@@ -31,7 +31,7 @@ namespace IkigaiScript {
 		"class", "fun", "operator", "coroutine", "coro", "return", "yeld",
 		"true", "false", "import",
 		"match", "case", "default", "dynamic",
-		"module", "export", "using", "from", "as", "defer"
+		"module", "export", "using", "from", "as", "defer", "live"
 	};
 
 	struct Token {

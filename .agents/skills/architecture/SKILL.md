@@ -448,3 +448,43 @@ SimpleScript implements a native `Result<T, E>` type representing either a succe
 - **`resultGet(r)`**: Unwraps the `Ok` value of `r`. Throws a runtime `Exception` if `r` is `Err`.
 - **`resultGetErr(r)`**: Unwraps the `Err` value of `r`. Throws a runtime `Exception` if `r` is `Ok`.
 - **Print Formatting**: Prints as `ok(value)` or `err(value)`.
+
+---
+
+## 22. Live Variables (Reactivity)
+
+SimpleScript supports spreadsheet-like reactivity using `live` variables.
+
+### Syntax & Semantics
+
+```ss
+live var a = b + c;       // live var with guard — recomputes when b or c change
+live dynamic d = a;       // live dynamic — accepts any type on recompute
+live var x;               // Pending live slot — guard set later via rebind
+live dynamic label;       // Pending dynamic live slot
+live x = y + 1;           // Live Rebind — attach/replace guard on existing var
+live var n: Int;           // Typed pending slot (uninit until rebind)
+```
+
+### Two states of a live slot
+
+| State | When | Behaviour |
+|-------|------|-----------|
+| **Pending** | `live var x;` / `live dynamic x;` | Slot registered in `DependencyManager`, guard = null, no subscriptions, value is uninit |
+| **Active** | `live var x = expr;` or `live x = expr` | Guard evaluated, runtime deps tracked, recomputes on upstream change |
+
+**Direct write to an Active live target** (`a = 99`) **throws** `Exception("Cannot assign directly to live variable...")`; use `live a = ...` to rebind.
+
+**Reading a Pending slot** before rebind follows the normal uninit-variable rules.
+
+### Technical Architecture
+1. **`DependencyManager`** (`dependencyManager.hpp/.cpp`): Manages all live bindings, dependency tracking, and notification. Owned by `IkigaiScriptInterpreter`; cleared via `clear()` on `clearState()`.
+2. **Identification (`VarSlot`)**: Variables are identified by their `Value*` address, which remains stable across normal assignments (`*lhs = *rhs`), making it perfect for tracking.
+3. **Read Tracking**: When a live variable evaluates its guard expression, `isCollecting` is true. Any variable read via `resolveVariable` triggers `DependencyManager::recordRead(VarSlot)`. Deps are deduplicated per recompute cycle.
+4. **Write Notification**: After a successful `operator=` assignment (and after `commitTransaction`), `DependencyManager::onVariableChanged(VarSlot)` is called. It notifies all subscribed live bindings to re-evaluate their guards. Notification is suppressed during recompute of the same binding to prevent trivial recursion.
+5. **Transaction integration**: `onVariableChanged` is fired only after `commitTransaction` succeeds. Rolled-back writes never reach the live graph.
+6. **Cycle Detection**: `internalRecompute` tracks recursion depth; exceeding 64 levels throws `Exception("Live dependency cycle detected")`. Mutual cycles (`live a = b+1; live b = a+1`) are caught on the second activation.
+7. **Dynamic recompute**: For `isDynamic` bindings, the computed type is preserved as-is; only owner flags (`isConst`, `isNullable`, `isDynamic`) are carried forward. For static bindings, the declared type is enforced with the same rules as `operator=` (Float←Int upcast allowed).
+8. **`registerLiveSlot`** (Pending path): called from `DefineVar` when `isLive && !defineExpression`. Stores a binding in Pending state with no deps or guard.
+9. **`activateBinding` / `rebindBinding`**: transition a slot to Active, set the guard expression, and trigger the first recompute. `rebindBinding` also works on plain (non-live) vars, converting them to live on the fly.
+

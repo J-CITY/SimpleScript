@@ -103,7 +103,8 @@ namespace IkigaiScript
 		TupleLiteral,
 		DestructuringAssign,
 		Defer,
-		SafeBlock
+		SafeBlock,
+		LiveRebind
 	};
 
 	enum class ParseState : uint8_t {

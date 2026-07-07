@@ -51,6 +51,8 @@ namespace IkigaiScript {
 		int genericBodyNesting = 0;
 		int getExpressionDepth = 0;  // incremented during getExpression inner parse loops
 		
+		bool pendingLive = false;
+		
 		std::vector<Metadata> pendingMetadata;
 	};
 }

@@ -10,6 +10,7 @@
 #include "types.hpp"
 #include "scope.hpp"
 #include "modules.hpp"
+#include "dependencyManager.hpp"
 
 #define TEST_MOD
 
@@ -34,6 +35,7 @@ namespace IkigaiScript {
 	private:
 		friend Expression;
 		friend class Parser;
+		friend class DependencyManager;
 		std::vector<Module> modules;
 		std::vector<Module> optionalModules;
 		ScopePtr globalScope = std::make_shared<Scope>(this);
@@ -83,6 +85,7 @@ namespace IkigaiScript {
 		ExceptionType __EXEPTION__{};
 
 		ArenaAllocator arena;
+		DependencyManager dependencyManager{this};
 
 		ScopePtr getGlobalScope() const { return globalScope; }
 
