@@ -20,6 +20,8 @@ namespace IkigaiScript {
         std::unordered_map<std::string, ScopePtr> scopes;
         std::unordered_map<std::string, FunctionRef> functions;
         std::unordered_map<std::string, std::list<FunctionRef>> operators;
+        // Multiple constructor overloads keyed by class name (like operators)
+        std::unordered_map<std::string, std::list<FunctionRef>> constructors;
         bool isClassScope = false;
         bool isGenericScope = false;
         bool isTransactionScope = false;

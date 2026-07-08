@@ -15,18 +15,18 @@ namespace IkigaiScript {
 		return res;
 	}
 
-	inline const std::set<char> WhitespaceChars = { ' ', '\t', '\n' };
-	inline const std::set<char> SpecialChars = { ',', '.', '(', ')', '{', '}', '[', ']', ';', '+', '-', '/', '*', '%', '<', '>', '=', '!', '&', '|', '"', '\'', '?', ':', '@'};
+	inline const std::set<char> WhitespaceChars = {' ', '\t', '\n'};
+	inline const std::set<char> SpecialChars = {',', '.', '(', ')', '{', '}', '[', ']', ';', '+', '-', '/', '*', '%', '<', '>', '=', '!', '&', '|', '"', '\'', '?', ':', '@'};
 	inline const std::set<char> GrammarChars = WhitespaceChars + SpecialChars;
-	inline const std::set<char> MultiCharTokenStartChars = { '+', '-', '/', '*', '<', '>', '=', '!', '&', '|', '#'};
-	inline const std::set<char> NumChars = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'x', 'X', 'b', 'B',
-		'A', 'C', 'D', 'F', 'a', 'c', 'd', 'f', '+', '-' };
-	inline const std::set<char> NumChars2 = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'x', 'X', 'b', 'B',
-		'A', 'C', 'D', 'F', 'a', 'c', 'd', 'f' };
-	inline const std::set<char> NumStartChars = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
-	inline const std::set<char> DisallowedIdentifierStartChars = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ' ', '\t', '\n', ',', '.',
-		'(', ')', '{', '}', '[', ']', ';', '+', '-', '/', '*', '%', '<', '>', '=', '!', '&', '|', '"' };
-	inline const std::set<std::string, std::less<>> keyWords = { "if", "else", "for", "while", "foreach", "break", "continue",
+	inline const std::set<char> MultiCharTokenStartChars = {'+', '-', '/', '*', '<', '>', '=', '!', '&', '|', '#'};
+	inline const std::set<char> NumChars = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'x', 'X', 'b', 'B',
+		'A', 'C', 'D', 'F', 'a', 'c', 'd', 'f', '+', '-'};
+	inline const std::set<char> NumChars2 = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'x', 'X', 'b', 'B',
+		'A', 'C', 'D', 'F', 'a', 'c', 'd', 'f'};
+	inline const std::set<char> NumStartChars = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+	inline const std::set<char> DisallowedIdentifierStartChars = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ' ', '\t', '\n', ',', '.',
+		'(', ')', '{', '}', '[', ']', ';', '+', '-', '/', '*', '%', '<', '>', '=', '!', '&', '|', '"'};
+	inline const std::set<std::string, std::less<>> keyWords = {"if", "else", "for", "while", "foreach", "break", "continue",
 		"var", "const",
 		"class", "fun", "operator", "coroutine", "coro", "return", "yield",
 		"true", "false", "import",

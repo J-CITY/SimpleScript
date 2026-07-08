@@ -49,10 +49,9 @@ namespace IkigaiScript {
 }
 
 
-namespace IkigaiScript
-{
+namespace IkigaiScript {
 
-	enum class Type : uint8_t {
+	enum class Type: uint8_t {
 		Null = 0,
 		Bool,
 		Char,
@@ -79,7 +78,7 @@ namespace IkigaiScript
 		None, Break, Continue
 	};
 
-	enum class ExpressionType : uint8_t {
+	enum class ExpressionType: uint8_t {
 		Value,
 		ResolveVar,
 		DefineVar,
@@ -112,7 +111,7 @@ namespace IkigaiScript
 		BranchBlock,
 	};
 
-	enum class ParseState : uint8_t {
+	enum class ParseState: uint8_t {
 		BeginExpression,
 		ReadLine,
 		DefineVar,
@@ -174,7 +173,7 @@ namespace IkigaiScript
 
 	DEFINE_ENUM_CLASS_BITWISE_OPERATORS(TokenType)
 
-	struct TypeDescriptor {
+		struct TypeDescriptor {
 		Type type = Type::Null;
 		bool isInit = false;
 		bool isNullable = true;
