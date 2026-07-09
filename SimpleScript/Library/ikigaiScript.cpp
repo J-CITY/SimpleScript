@@ -20,6 +20,7 @@
 #include "utf8Utils.hpp"
 #include "concurrency/cancellation.hpp"
 #include "bytecode/serializer.hpp"
+#include "bytecode/generic_collector.hpp"
 
 namespace IkigaiScript {
 
@@ -334,6 +335,10 @@ namespace IkigaiScript {
 		}
 	};
 
+	// Forward declaration — defined later in this translation unit.
+	static ChunkRef buildCompiledScript(IkigaiScriptInterpreter* interp, ScopePtr scope,
+		const std::vector<ExpressionPtr>& topLevel);
+
 	Module& IkigaiScriptInterpreter::loadScriptModule(const std::string& path, const std::string& importerPath) {
 		namespace fs = std::filesystem;
 		ParserStateSaver saver(parser);
@@ -380,11 +385,24 @@ namespace IkigaiScript {
 		auto oldScope = parser->parseScope;
 		parser->parseScope = moduleScope;
 
+		const bool compilingNow = parser->compileOnly;
+
+		// When the parent is in compile-only mode, isolate the module's collected
+		// statements so they don't leak into the parent's pendingTopLevelStatements.
+		std::vector<ExpressionPtr> savedParentStmts;
+		if (compilingNow) {
+			savedParentStmts = std::move(parser->pendingTopLevelStatements);
+			parser->pendingTopLevelStatements.clear();
+		}
+
 		bool failed = false;
 		try {
 			failed = parser->evaluate(s);
 		}
 		catch (...) {
+			if (compilingNow) {
+				parser->pendingTopLevelStatements = std::move(savedParentStmts);
+			}
 			parser->parseScope = oldScope;
 			parser->currentScriptPath = oldPath;
 			moduleLoadStack.pop_back();
@@ -392,6 +410,26 @@ namespace IkigaiScript {
 		}
 		parser->parseScope = oldScope;
 		parser->currentScriptPath = oldPath;
+
+		if (compilingNow) {
+			// Compile the module's top-level statements and functions to bytecode.
+			auto moduleStmts = std::move(parser->pendingTopLevelStatements);
+			parser->pendingTopLevelStatements = std::move(savedParentStmts);
+
+			auto modChunk = buildCompiledScript(this, moduleScope, moduleStmts);
+			modules[modIdx].compiledChunk = modChunk;
+
+			// Execute module initializer stmts directly in moduleScope (not through the
+			// VM frame) so that DefineVar expressions store variables in moduleScope rather
+			// than in a temporary call-frame child scope.  FunctionDef nodes are skipped
+			// because the functions are already compiled to bytecode by buildCompiledScript.
+			for (auto& stmt : moduleStmts) {
+				if (stmt && stmt->type != ExpressionType::FunctionDef) {
+					getValue(stmt, moduleScope, nullptr);
+				}
+			}
+			modules[modIdx].isInitialized = true;
+		}
 
 		moduleLoadStack.pop_back();
 		if (failed) {
@@ -2135,101 +2173,130 @@ namespace IkigaiScript {
 		return std::make_shared<Value>();
 	}
 
+	// Build a type-name string (e.g. "Int", "String") from a runtime TypeDescriptor,
+	// substituting generic param names using genericTypeMap when present.
+	static std::string genericTypeToStr(const TypeDescriptor& td,
+		const std::vector<std::string>& genericParams,
+		const std::map<std::string, std::string>& genericTypeMap)
+	{
+		if (td.type == Type::Class && td.subtype) {
+			auto s = std::get<std::string>(*td.subtype);
+			if (std::find(genericParams.begin(), genericParams.end(), s) != genericParams.end()) {
+				auto it = genericTypeMap.find(s);
+				if (it != genericTypeMap.end()) return it->second;
+			}
+			return s;
+		}
+		switch (td.type) {
+			case Type::Int: return "Int";
+			case Type::Float: return "Float";
+			case Type::String: return "String";
+			case Type::Bool: return "Bool";
+			case Type::List: return "List";
+			case Type::Array: return "Array";
+			case Type::Set: return "Set";
+			case Type::Map: return "Map";
+			default: return "Dynamic";
+		}
+	}
+
+	// Produce a concrete type-name for a runtime Value (used during monomorphization).
+	static std::string valueTypeName(const ValuePtr& val) {
+		switch (val->getType()) {
+			case Type::Int: return "Int";
+			case Type::Float: return "Float";
+			case Type::String: return "String";
+			case Type::Bool: return "Bool";
+			case Type::List: return "List";
+			default: return "Dynamic";
+		}
+	}
+
+	// Monomorphize a generic template function for the given type map, registering
+	// the concrete specialization in scope. Returns the resolved specialization ref.
+	// If the specialization already exists in scope, returns it immediately.
+	FunctionRef IkigaiScriptInterpreter::monomorphizeGeneric(
+		FunctionRef fnc,
+		const std::map<std::string, std::string>& genericTypeMap,
+		ScopePtr scope)
+	{
+		std::string newName = fnc->name + "__";
+		for (size_t i = 0; i < fnc->genericParams.size(); ++i) {
+			auto it = genericTypeMap.find(fnc->genericParams[i]);
+			newName += (it != genericTypeMap.end() ? it->second : "Dynamic");
+			if (i + 1 < fnc->genericParams.size()) newName += "_";
+		}
+
+		auto iter = scope->functions.find(newName);
+		if (iter != scope->functions.end()) {
+			return iter->second;
+		}
+
+		// Text-substitute type params in the raw body.
+		std::string newBody = fnc->genericBodyRaw;
+		for (auto& param : fnc->genericParams) {
+			auto it = genericTypeMap.find(param);
+			std::string replace = (it != genericTypeMap.end() ? it->second : "Dynamic");
+			size_t pos = 0;
+			while ((pos = newBody.find(param, pos)) != std::string::npos) {
+				bool leftOk = (pos == 0 || !isalnum(newBody[pos - 1]));
+				bool rightOk = (pos + param.length() == newBody.length() || !isalnum(newBody[pos + param.length()]));
+				if (leftOk && rightOk) {
+					newBody.replace(pos, param.length(), replace);
+					pos += replace.length();
+				}
+				else {
+					pos += param.length();
+				}
+			}
+		}
+
+		std::string sig = "fun " + newName + "(";
+		for (size_t i = 0; i < fnc->argNames.size(); ++i) {
+			sig += fnc->argNames[i] + ": ";
+			sig += genericTypeToStr(fnc->types.at(fnc->argNames[i]), fnc->genericParams, genericTypeMap);
+			if (i + 1 < fnc->argNames.size()) sig += ",";
+		}
+		sig += ")";
+		if (fnc->returnType) {
+			sig += ": " + genericTypeToStr(*fnc->returnType, fnc->genericParams, genericTypeMap);
+		}
+		sig += " { " + newBody + " }";
+
+		Parser p(this);
+		p.evaluate(sig);
+
+		return resolveFunction(newName, scope);
+	}
+
 	ValuePtr IkigaiScriptInterpreter::callFunction(FunctionRef fnc, ScopePtr scope, const List& args, const std::map<std::string, ValuePtr>& namedArgs, Class* classs) {
 		if (fnc->getBodyType() == FunctionBodyType::Lambda) {
 			return get<Lambda>(fnc->body)(args);
 		}
 		if (!fnc->genericParams.empty()) {
+			// Build type map from runtime argument types.
 			std::map<std::string, std::string> genericTypeMap;
 			for (size_t i = 0; i < fnc->argNames.size(); ++i) {
-				auto argName = fnc->argNames[i];
-				if (i < args.size()) {
-					auto typeDesc = fnc->types[argName];
-					if (typeDesc.type == Type::Class && typeDesc.subtype) {
-						auto genName = std::get<std::string>(*typeDesc.subtype);
-						if (std::find(fnc->genericParams.begin(), fnc->genericParams.end(), genName) != fnc->genericParams.end()) {
-							std::string argTypeName;
-							switch (args[i]->getType()) {
-								case Type::Int: argTypeName = "Int"; break;
-								case Type::Float: argTypeName = "Float"; break;
-								case Type::String: argTypeName = "String"; break;
-								case Type::Bool: argTypeName = "Bool"; break;
-								case Type::List: argTypeName = "List"; break;
-								default: argTypeName = "Dynamic"; break;
-							}
-							genericTypeMap[genName] = argTypeName;
-						}
+				if (i >= args.size()) break;
+				auto& argName = fnc->argNames[i];
+				auto& typeDesc = fnc->types.at(argName);
+				if (typeDesc.type == Type::Class && typeDesc.subtype) {
+					auto genName = std::get<std::string>(*typeDesc.subtype);
+					if (std::find(fnc->genericParams.begin(), fnc->genericParams.end(), genName) != fnc->genericParams.end()) {
+						genericTypeMap[genName] = valueTypeName(args[i]);
 					}
 				}
 			}
 
-			std::string newName = fnc->name + "__";
-			for (size_t i = 0; i < fnc->genericParams.size(); ++i) {
-				newName += genericTypeMap[fnc->genericParams[i]];
-				if (i + 1 < fnc->genericParams.size()) newName += "_";
+			auto mono = monomorphizeGeneric(fnc, genericTypeMap, scope);
+			// Lazily compile the freshly-created monomorph when we are running inside a
+			// bytecode context (ExecutionMode::Bytecode or runCompiledScript is active).
+			if (mono && !mono->forceInterpret
+				&& mono->getBodyType() == FunctionBodyType::Subexpressions
+				&& (executionMode == ExecutionMode::Bytecode || bytecodeActive)) {
+				compileFunctionToBytecode(mono);
 			}
-
-			auto iter = scope->functions.find(newName);
-			if (iter != scope->functions.end()) {
-				return callFunction(iter->second, scope, args, classs);
-			}
-
-			std::string newBody = fnc->genericBodyRaw;
-			for (auto& param : fnc->genericParams) {
-				std::string search = param;
-				std::string replace = genericTypeMap[param];
-				size_t pos = 0;
-				while ((pos = newBody.find(search, pos)) != std::string::npos) {
-					bool leftOk = (pos == 0 || !isalnum(newBody[pos - 1]));
-					bool rightOk = (pos + search.length() == newBody.length() || !isalnum(newBody[pos + search.length()]));
-					if (leftOk && rightOk) {
-						newBody.replace(pos, search.length(), replace);
-						pos += replace.length();
-					}
-					else {
-						pos += search.length();
-					}
-				}
-			}
-
-			std::string sig = "fun " + newName + "(";
-			auto typeToStr = [&](TypeDescriptor td) -> std::string
-			{
-				if (td.type == Type::Class && td.subtype) {
-					auto s = std::get<std::string>(*td.subtype);
-					if (std::find(fnc->genericParams.begin(), fnc->genericParams.end(), s) != fnc->genericParams.end()) {
-						return genericTypeMap[s];
-					}
-					return s;
-				}
-				switch (td.type) {
-					case Type::Int: return "Int";
-					case Type::Float: return "Float";
-					case Type::String: return "String";
-					case Type::Bool: return "Bool";
-					case Type::List: return "List";
-					case Type::Array: return "Array";
-					case Type::Set: return "Set";
-					case Type::Map: return "Map";
-					default: return "Dynamic";
-				}
-			};
-
-			for (size_t i = 0; i < fnc->argNames.size(); ++i) {
-				sig += fnc->argNames[i] + ": ";
-				sig += typeToStr(fnc->types[fnc->argNames[i]]);
-				if (i + 1 < fnc->argNames.size()) sig += ",";
-			}
-			sig += ")";
-			if (fnc->returnType) {
-				sig += ": " + typeToStr(*fnc->returnType);
-			}
-			sig += " { " + newBody + " }";
-
-			Parser p(this);
-			p.evaluate(sig);
-
-			return callFunction(resolveFunction(newName, scope), scope, args, classs);
+			return callFunction(mono, scope, args, classs);
 		}
 
 		switch (fnc->getBodyType()) {
@@ -4164,6 +4231,27 @@ namespace IkigaiScript {
 			chunk->functions[name] = bfn;
 		}
 
+		// Statically generate and compile monomorphizations of generic functions
+		// whose argument types can be inferred from the AST.
+		{
+			GenericInstantiationCollector collector(scope);
+			auto instantiations = collector.collect(topLevel);
+
+			for (auto& inst : instantiations) {
+				if (!inst.templateFn || inst.typeMap.empty()) continue;
+
+				auto mono = interp->monomorphizeGeneric(inst.templateFn, inst.typeMap, scope);
+				if (!mono || mono->forceInterpret) continue;
+				if (mono->getBodyType() != FunctionBodyType::Subexpressions) continue;
+
+				auto bfn = compiler.compileFunction(mono);
+				if (!bfn) continue;
+				mono->body = bfn;
+				bfn->argNames = mono->argNames;
+				chunk->functions[mono->name] = bfn;
+			}
+		}
+
 		// Compile top-level statements into the chunk's main entry point.
 		if (!topLevel.empty()) {
 			chunk->main = compiler.compileStatements(topLevel, "__main__");
@@ -4237,7 +4325,17 @@ namespace IkigaiScript {
 		if (!vm) vm = std::make_unique<VM>(this);
 		auto scope = scopeArg ? scopeArg : globalScope;
 		bindCompiledScriptToScope(this, chunk, scope);
-		return vm->runChunk(chunk, scope);
+		bytecodeActive = true;
+		ValuePtr result;
+		try {
+			result = vm->runChunk(chunk, scope);
+		}
+		catch (...) {
+			bytecodeActive = false;
+			throw;
+		}
+		bytecodeActive = false;
+		return result;
 	}
 
 	ValuePtr IkigaiScriptInterpreter::runCompiledScriptFile(const std::string& path,

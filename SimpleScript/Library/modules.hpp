@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include "bytecode/bytecode_fwd.hpp"
 #include <string>
 #include <unordered_set>
 namespace IkigaiScript {
@@ -52,6 +53,11 @@ namespace IkigaiScript {
         std::string sourcePath;
         std::unordered_set<std::string> exports;
         bool isScriptModule = false;
+
+        // Set when the module has been compiled to bytecode (compileScript path).
+        // nullptr for C++ builtin modules or when running in interpreter mode.
+        ChunkRef compiledChunk;
+        bool isInitialized = false;
 
         Module(ModulePrivilegeFlags f, ScopePtr s, std::string path = "", std::unordered_set<std::string> exp = {}, bool isScript = false)
             : requiredPermissions(f), scope(s), sourcePath(std::move(path)), exports(std::move(exp)), isScriptModule(isScript) {}

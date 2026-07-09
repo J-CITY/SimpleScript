@@ -58,7 +58,19 @@ namespace Native {
 			return executionMode;
 		}
 
+		// True while a compiled-script context is active (compileScript / runCompiledScript).
+		// Used to enable lazy bytecode compilation of newly-created generic monomorphs.
+		bool bytecodeActive = false;
+
 		bool compileFunctionToBytecode(FunctionRef fnc);
+
+		// Produce a concrete monomorphization of a generic template for a given type map.
+		// The specialization is re-parsed and registered in scope on first call; subsequent
+		// calls for the same name return the cached entry. Returns nullptr if the template
+		// has no genericParams.
+		FunctionRef monomorphizeGeneric(FunctionRef fnc,
+			const std::map<std::string, std::string>& typeMap,
+			ScopePtr scope);
 
 		ValuePtr runStatementsBytecode(const std::vector<ExpressionPtr>& stmts, ScopePtr scope);
 

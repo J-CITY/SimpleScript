@@ -1,6 +1,9 @@
 #include "TestHelpers.hpp"
+#include <filesystem>
 #include <fstream>
 #include <cstdio>
+
+namespace fs = std::filesystem;
 
 // Bytecode VM dual-run test suite.
 //
@@ -398,4 +401,215 @@ TEST_CASE("BC: runCompiledScript executes main chunk body", "[bytecode][compile_
 	runInterp.__DEBUG_OUT__ = "";
 	runInterp.runCompiledScript(loaded);
 	REQUIRE(runInterp.__DEBUG_OUT__ == "101");
+}
+
+// ---------------------------------------------------------------------------
+// Import compile path (Фаза 1)
+// ---------------------------------------------------------------------------
+
+// Helper: write a temp .ss file and return its path.
+static std::string writeTempSS(const std::string& filename, const std::string& content) {
+	auto p = fs::temp_directory_path() / filename;
+	std::ofstream f(p);
+	f << content;
+	return p.generic_string();
+}
+
+TEST_CASE("BC: compileScript with import — module functions compiled to bytecode", "[bytecode][compile_io][import]") {
+	auto modPath = writeTempSS("bc_mod_funcs.ss",
+		"module BcMod;\n"
+		"export fun double(n: Int): Int { return n * 2; }\n"
+	);
+
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	// Use selective import so the function is bound in the main scope,
+	// avoiding the module-qualified call path in the VM.
+	std::string src = "import \"" + modPath + "\";"
+		"using { double } from BcMod;"
+		"print(double(21));";
+	auto chunk = interp.compileScript(src);
+	REQUIRE(chunk != nullptr);
+
+	// The imported module function should have been compiled to bytecode.
+	auto* mod = interp.findModuleByName("BcMod");
+	REQUIRE(mod != nullptr);
+	auto fncIt = mod->scope->functions.find("double");
+	REQUIRE(fncIt != mod->scope->functions.end());
+	REQUIRE(fncIt->second->getBodyType() == FunctionBodyType::Bytecode);
+
+	interp.__DEBUG_OUT__ = "";
+	interp.runCompiledScript(chunk);
+	REQUIRE(interp.__DEBUG_OUT__ == "42");
+}
+
+TEST_CASE("BC: compileScript with import — export var initialized during compile", "[bytecode][compile_io][import]") {
+	auto modPath = writeTempSS("bc_mod_var.ss",
+		"module BcVarMod;\n"
+		"export var answer = 40 + 2;\n"
+	);
+
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	std::string src = "import \"" + modPath + "\";\nprint(BcVarMod.answer);";
+	auto chunk = interp.compileScript(src);
+	REQUIRE(chunk != nullptr);
+
+	// The export var should be initialized in the module scope.
+	auto* mod = interp.findModuleByName("BcVarMod");
+	REQUIRE(mod != nullptr);
+	REQUIRE(mod->scope->variables.count("answer") > 0);
+
+	interp.__DEBUG_OUT__ = "";
+	interp.runCompiledScript(chunk);
+	REQUIRE(interp.__DEBUG_OUT__ == "42");
+}
+
+TEST_CASE("BC: compileScript with import — module stmts not in parent chunk main", "[bytecode][compile_io][import]") {
+	// Module top-level initialises a counter.  If the stmts leaked into the
+	// parent chunk->main they would run again on runCompiledScript and the
+	// counter would be 2.  It must be exactly 1 (init at compile time only).
+	auto modPath = writeTempSS("bc_mod_leak.ss",
+		"module BcLeak;\n"
+		"export var counter = 0;\n"
+		"counter = counter + 1;\n"
+	);
+
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	std::string src = "import \"" + modPath + "\";\nprint(BcLeak.counter);";
+	auto chunk = interp.compileScript(src);
+	REQUIRE(chunk != nullptr);
+
+	// Module init ran exactly once (during compileScript module init).
+	auto* mod = interp.findModuleByName("BcLeak");
+	REQUIRE(mod != nullptr);
+	auto counterIt = mod->scope->variables.find("counter");
+	REQUIRE(counterIt != mod->scope->variables.end());
+	REQUIRE(counterIt->second->getInt() == 1);
+
+	interp.__DEBUG_OUT__ = "";
+	interp.runCompiledScript(chunk);
+	REQUIRE(interp.__DEBUG_OUT__ == "1");
+}
+
+TEST_CASE("BC: compileScript with import — circular import still throws", "[bytecode][compile_io][import]") {
+	auto pathA = (fs::temp_directory_path() / "bc_circA.ss").generic_string();
+	auto pathB = (fs::temp_directory_path() / "bc_circB.ss").generic_string();
+	{
+		std::ofstream a(pathA);
+		a << "import \"" << pathB << "\";\nmodule BcCircA;\nexport var a = 1;\n";
+		std::ofstream b(pathB);
+		b << "import \"" << pathA << "\";\nmodule BcCircB;\nexport var b = 2;\n";
+	}
+
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	bool threw = false;
+	try {
+		interp.compileScript("import \"" + pathA + "\";");
+	}
+	catch (...) {
+		threw = true;
+	}
+	if (!threw) {
+		// Alternatively the interpreter records the exception.
+		threw = (interp.__EXEPTION__ != ExceptionType::None);
+	}
+	REQUIRE(threw);
+
+	std::error_code ec;
+	fs::remove(pathA, ec);
+	fs::remove(pathB, ec);
+}
+
+// ---------------------------------------------------------------------------
+// Generic functions + bytecode (Фаза 2)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("BC: compileScript with generic call — monomorph compiled to bytecode", "[bytecode][compile_io][generics]") {
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	// identity<T> called with literal Int → monomorph identity__Int should be compiled.
+	auto chunk = interp.compileScript(R"(
+        fun identity<T>(x: T): T { return x; }
+        var r = identity(42);
+        print(r);
+    )");
+	REQUIRE(chunk != nullptr);
+
+	// The concrete monomorph should be in the chunk's functions as bytecode.
+	REQUIRE(chunk->functions.count("identity__Int") > 0);
+
+	interp.__DEBUG_OUT__ = "";
+	interp.runCompiledScript(chunk);
+	REQUIRE(interp.__DEBUG_OUT__ == "42");
+}
+
+TEST_CASE("BC: compileScript with generic — template itself not in chunk", "[bytecode][compile_io][generics]") {
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	auto chunk = interp.compileScript("fun identity<T>(x: T): T { return x; } var r = identity(1);");
+	REQUIRE(chunk != nullptr);
+	// The unparameterized template must NOT appear in the chunk.
+	REQUIRE(chunk->functions.count("identity") == 0);
+}
+
+TEST_CASE("BC: compileFunctionToBytecode still skips generic template", "[bytecode][generics]") {
+	IkigaiScriptInterpreter interp;
+	interp.evaluate("fun identity<T>(x: T): T { return x; };");
+	auto fnc = interp.resolveFunction("identity");
+	REQUIRE(fnc != nullptr);
+	REQUIRE_FALSE(interp.compileFunctionToBytecode(fnc));
+	REQUIRE(fnc->getBodyType() == FunctionBodyType::Subexpressions);
+}
+
+TEST_CASE("BC: generic functions — same output in bytecode mode", "[bytecode][generics]") {
+	// Verify that running generic calls under ExecutionMode::Bytecode produces the
+	// same results as the interpreter.
+	const std::string code = R"(
+        fun wrap<T>(x: T): T { return x; }
+        var a = wrap(10);
+        var b = wrap("hello");
+        print(a);
+        print(b);
+    )";
+
+	auto interpOut = runFresh(code);
+
+	IkigaiScriptInterpreter bcInterp(ModulePrivilege::allPrivilege);
+	bcInterp.setExecutionMode(ExecutionMode::Bytecode);
+	bcInterp.__DEBUG_OUT__ = "";
+	bcInterp.evaluate(code);
+	auto bcOut = bcInterp.__DEBUG_OUT__;
+
+	REQUIRE(interpOut == bcOut);
+}
+
+TEST_CASE("BC: generic runtime fallback — dynamic arg compiled lazily", "[bytecode][compile_io][generics]") {
+	// When a generic is called through runCompiledScript with a type that
+	// wasn't statically known, the monomorph must be compiled on first call.
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	auto chunk = interp.compileScript(R"(
+        fun wrap<T>(x: T): T { return x; }
+        fun callWrap(n: Int): Int { return wrap(n); }
+        print(callWrap(7));
+    )");
+	REQUIRE(chunk != nullptr);
+
+	interp.__DEBUG_OUT__ = "";
+	interp.runCompiledScript(chunk);
+	REQUIRE(interp.__DEBUG_OUT__ == "7");
+}
+
+TEST_CASE("BC: generic multiple monomorphs in one compileScript", "[bytecode][compile_io][generics]") {
+	IkigaiScriptInterpreter interp(ModulePrivilege::allPrivilege);
+	auto chunk = interp.compileScript(R"(
+        fun identity<T>(x: T): T { return x; }
+        var a = identity(1);
+        var b = identity("hi");
+        print(a);
+        print(b);
+    )");
+	REQUIRE(chunk != nullptr);
+	REQUIRE(chunk->functions.count("identity__Int") > 0);
+	REQUIRE(chunk->functions.count("identity__String") > 0);
+
+	interp.__DEBUG_OUT__ = "";
+	interp.runCompiledScript(chunk);
+	REQUIRE(interp.__DEBUG_OUT__ == "1hi");
 }

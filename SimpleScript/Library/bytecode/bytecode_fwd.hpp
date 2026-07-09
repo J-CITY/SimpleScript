@@ -2,7 +2,10 @@
 #include <memory>
 
 namespace IkigaiScript {
-	// Forward declaration — full definition is in bytecode/chunk.hpp.
+	// Forward declarations — full definitions are in bytecode/chunk.hpp.
 	struct BytecodeFunction;
 	using BytecodeFunctionRef = std::shared_ptr<BytecodeFunction>;
+
+	struct Chunk;
+	using ChunkRef = std::shared_ptr<Chunk>;
 }
