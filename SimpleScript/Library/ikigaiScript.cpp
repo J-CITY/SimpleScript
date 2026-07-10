@@ -181,7 +181,7 @@ namespace IkigaiScript {
 
 	void IkigaiScriptInterpreter::createOptionalModules() {
 		newModule("file", ModulePrivilege::fileSystemRead | ModulePrivilege::fileSystemWrite, {
-			{"saveFile", [](const List& args)
+			{"saveFile", [this](const List& args)
 		{
 			if (args.size() == 2
 				&& args[0]->getType() == Type::String
@@ -190,18 +190,18 @@ namespace IkigaiScript {
 				auto t = std::ofstream(args[1]->getString(), std::ofstream::out);
 				t << args[0]->getString();
 				t.flush();
-				return std::make_shared<Value>(true);
+				return makeValue(true);
 			}
-			return std::make_shared<Value>(false);
+			return makeValue(false);
 		}},
-			{"readFile", [](const List& args)
+			{"readFile", [this](const List& args)
 		{
 			if (args.size() == 1 && args[0]->getType() == Type::String) {
 				std::stringstream buffer;
 				buffer << std::ifstream(args[0]->getString()).rdbuf();
-				return make_shared<Value>(buffer.str());
+				return makeValue(buffer.str());
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 			});
 
@@ -222,7 +222,7 @@ namespace IkigaiScript {
 			}
 			std::vector<ValuePtr> jobArgs(args.begin() + 1, args.end());
 			auto task = nativePool->submit(name, jobArgs);
-			return std::make_shared<Value>(task);
+			return makeValue(task);
 		});
 
 		newModule("thread", ModulePrivilege::fileSystemRead | ModulePrivilege::experimental, {
@@ -234,18 +234,18 @@ namespace IkigaiScript {
 				{
 					callFunction(func, {});
 				});
-				return make_shared<Value>(ptr);
+				return makeValue(ptr);
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
-			{"joinThread", [](const List& args)
+			{"joinThread", [this](const List& args)
 		{
 			if (args.size() == 1 && args[0]->getType() == Type::Pointer) {
 				std::thread* ptr = (std::thread*)args[0]->getPointer();
 				ptr->join();
 				delete ptr;
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 			});
 	}
@@ -638,12 +638,12 @@ namespace IkigaiScript {
 			if (args.size() == 1) {
 				auto zero = Value(Int(0));
 				upconvert(*args[0], zero);
-				return std::make_shared<Value>(zero + *args[0]);
+				return makeValue(zero + *args[0]);
 			}
 			if (args.size() == 0) {
 				return resolveVariable("+");
 			}
-			return std::make_shared<Value>(*args[0] + *args[1]);
+			return makeValue(*args[0] + *args[1]);
 		}},
 
 			{"-", [this](const List& args)
@@ -657,9 +657,9 @@ namespace IkigaiScript {
 			if (args.size() == 1) {
 				auto zero = Value(Int(0));
 				upconvert(*args[0], zero);
-				return std::make_shared<Value>(zero - *args[0]);
+				return makeValue(zero - *args[0]);
 			}
-			return std::make_shared<Value>(*args[0] - *args[1]);
+			return makeValue(*args[0] - *args[1]);
 		}},
 
 			{"*", [this](const List& args)
@@ -670,7 +670,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("*");
 			}
-			return std::make_shared<Value>(*args[0] * *args[1]);
+			return makeValue(*args[0] * *args[1]);
 		}},
 
 			{"/", [this](const List& args)
@@ -681,7 +681,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("/");
 			}
-			return std::make_shared<Value>(*args[0] / *args[1]);
+			return makeValue(*args[0] / *args[1]);
 		}},
 
 			{"%", [this](const List& args)
@@ -692,7 +692,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("%");
 			}
-			return std::make_shared<Value>(*args[0] % *args[1]);
+			return makeValue(*args[0] % *args[1]);
 		}},
 
 			{"==", [this](const List& args)
@@ -703,7 +703,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("==");
 			}
-			return std::make_shared<Value>((Int)(*args[0] == *args[1]));
+			return makeValue((Int)(*args[0] == *args[1]));
 		}},
 
 			{"!=", [this](const List& args)
@@ -714,7 +714,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("!=");
 			}
-			return std::make_shared<Value>((Int)(*args[0] != *args[1]));
+			return makeValue((Int)(*args[0] != *args[1]));
 		}},
 
 			{"||", [this](const List& args)
@@ -725,7 +725,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("||");
 			}
-			return std::make_shared<Value>((Int)(*args[0] || *args[1]));
+			return makeValue((Int)(*args[0] || *args[1]));
 		}},
 
 			{"&&", [this](const List& args)
@@ -736,13 +736,13 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("&&");
 			}
-			return std::make_shared<Value>((Int)(*args[0] && *args[1]));
+			return makeValue((Int)(*args[0] && *args[1]));
 		}},
 
-			{"++", [](const List& args)
+			{"++", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args.size() > 2) {
 				throw Exception("Must have 0, 1 or 2 arguments");
@@ -756,16 +756,16 @@ namespace IkigaiScript {
 			}
 			else {
 				// postfix
-				auto val = std::make_shared<Value>(*args[i]);
+				auto val = copyValue(*args[i]);
 				*args[i] += Value(Int(1));
 				return val;
 			}
 		}},
 
-			{"--", [](const List& args)
+			{"--", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args.size() > 2) {
 				throw Exception("Must have 0, 1 or 2 arguments");
@@ -779,55 +779,55 @@ namespace IkigaiScript {
 			}
 			else {
 				// postfix
-				auto val = std::make_shared<Value>(*args[i]);
+				auto val = copyValue(*args[i]);
 				*args[i] -= Value(Int(1));
 				return val;
 			}
 		}},
 
-			{"+=", [](const List& args)
+			{"+=", [this](const List& args)
 		{
 			if (args.size() == 1 || args.size() > 2) {
 				throw Exception("Must have 0 or 2 arguments");
 			}
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			*args[0] += *args[1];
 			return args[0];
 		}},
 
-			{"-=", [](const List& args)
+			{"-=", [this](const List& args)
 		{
 			if (args.size() == 1 || args.size() > 2) {
 				throw Exception("Must have 0 or 2 arguments");
 			}
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			*args[0] -= *args[1];
 			return args[0];
 		}},
 
-			{"*=", [](const List& args)
+			{"*=", [this](const List& args)
 		{
 			if (args.size() == 1 || args.size() > 2) {
 				throw Exception("Must have 0 or 2 arguments");
 			}
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			*args[0] *= *args[1];
 			return args[0];
 		}},
 
-			{"/=", [](const List& args)
+			{"/=", [this](const List& args)
 		{
 			if (args.size() == 1 || args.size() > 2) {
 				throw Exception("Must have 0 or 2 arguments");
 			}
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			*args[0] /= *args[1];
 			return args[0];
@@ -841,7 +841,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable(">");
 			}
-			return std::make_shared<Value>((Int)(*args[0] > *args[1]));
+			return makeValue((Int)(*args[0] > *args[1]));
 		}},
 
 			{"<", [this](const List& args)
@@ -852,7 +852,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("<");
 			}
-			return std::make_shared<Value>((Int)(*args[0] < *args[1]));
+			return makeValue((Int)(*args[0] < *args[1]));
 		}},
 
 			{">=", [this](const List& args)
@@ -863,7 +863,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable(">=");
 			}
-			return std::make_shared<Value>((Int)(*args[0] >= *args[1]));
+			return makeValue((Int)(*args[0] >= *args[1]));
 		}},
 
 			{"<=", [this](const List& args)
@@ -874,7 +874,7 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("<=");
 			}
-			return std::make_shared<Value>((Int)(*args[0] <= *args[1]));
+			return makeValue((Int)(*args[0] <= *args[1]));
 		}},
 
 			{"!", [this](const List& args)
@@ -883,26 +883,26 @@ namespace IkigaiScript {
 				return resolveVariable("!");
 			}
 			if (args.size() == 1) {
-				return std::make_shared<Value>(Int(args[0]->getBool() ? 0 : 1));
+				return makeValue(Int(args[0]->getBool() ? 0 : 1));
 			}
 			throw Exception("! requires 1 argument");
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"fact", [](const List& args)
+			{"fact", [this](const List& args)
 		{
 			if (args.size() != 1) {
 				throw Exception("fact requires 1 argument");
 			}
-			if (args[0]->getType() != Type::Int) return std::make_shared<Value>();
+			if (args[0]->getType() != Type::Int) return makeValue();
 			auto val = Int(1);
 			for (auto i = Int(1); i <= args[0]->getInt(); ++i) {
 				val *= i;
 			}
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"..", [](const List& args)
+			{"..", [this](const List& args)
 		{
 			// start..end — exclusive: [start, end)
 			if (args.size() != 2) throw Exception(".. requires 2 arguments");
@@ -910,10 +910,10 @@ namespace IkigaiScript {
 			rv.start = args[0]->getInt();
 			rv.end_ = args[1]->getInt();
 			rv.inclusive = false;
-			return std::make_shared<Value>(rv);
+			return makeValue(rv);
 		}},
 
-			{"..=", [](const List& args)
+			{"..=", [this](const List& args)
 		{
 			// start..=end — inclusive: [start, end]
 			if (args.size() != 2) throw Exception("..= requires 2 arguments");
@@ -921,7 +921,7 @@ namespace IkigaiScript {
 			rv.start = args[0]->getInt();
 			rv.end_ = args[1]->getInt();
 			rv.inclusive = true;
-			return std::make_shared<Value>(rv);
+			return makeValue(rv);
 		}},
 
 			{"#", [this](const List& args)
@@ -932,30 +932,30 @@ namespace IkigaiScript {
 			if (args.size() == 0) {
 				return resolveVariable("#");
 			}
-			return std::make_shared<Value>((Int)args[0]->getHash());
+			return makeValue((Int)args[0]->getHash());
 		}},
 
 			// aliases
-			{"identity", [](List args)
+			{"identity", [this](List args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			return args[0];
 		}},
 
-			{"copy", [](List args)
+			{"copy", [this](List args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Class) {
-				return std::make_shared<Value>(std::make_shared<Class>(*args[0]->getClass()));
+				return makeValue(std::make_shared<Class>(*args[0]->getClass()));
 			}
-			return std::make_shared<Value>(*args[0]);
+			return copyValue(*args[0]);
 		}},
 
-			{"listindex", [](List args)
+			{"listindex", [this](List args)
 		{
 			if (args.size() > 0) {
 				if (args.size() == 1) {
@@ -974,8 +974,8 @@ namespace IkigaiScript {
 						Int cpLen = (Int)utf8Length(s);
 						if (start < 0) start = 0;
 						if (end >= cpLen) end = cpLen - 1;
-						if (start > end) return std::make_shared<Value>(std::string(""));
-						return std::make_shared<Value>(utf8Slice(s, (size_t)start, (size_t)end));
+						if (start > end) return makeValue(std::string(""));
+						return makeValue(utf8Slice(s, (size_t)start, (size_t)end));
 					}
 					auto makeSlice = [&](auto& container)
 					{
@@ -984,9 +984,9 @@ namespace IkigaiScript {
 						if (end >= len) end = len - 1;
 						List result;
 						for (Int i = start; i <= end; ++i) {
-							result.push_back(std::make_shared<Value>(*container[i]));
+							result.push_back(copyValue(*container[i]));
 						}
-						return std::make_shared<Value>(result);
+						return makeValue(result);
 					};
 					if (var->getType() == Type::List || var->getType() == Type::Tuple) {
 						return makeSlice(var->getList());
@@ -999,15 +999,15 @@ namespace IkigaiScript {
 						List result;
 						for (Int i = start; i <= end; ++i) {
 							switch (arr.getType()) {
-								case Type::Int: result.push_back(std::make_shared<Value>(arr.value.asInt[i])); break;
-								case Type::Float: result.push_back(std::make_shared<Value>(arr.value.asFloat[i])); break;
-								case Type::String: result.push_back(std::make_shared<Value>(arr.value.asString[i])); break;
+								case Type::Int: result.push_back(makeValue(arr.value.asInt[i])); break;
+								case Type::Float: result.push_back(makeValue(arr.value.asFloat[i])); break;
+								case Type::String: result.push_back(makeValue(arr.value.asString[i])); break;
 								default: break;
 							}
 						}
-						return std::make_shared<Value>(result);
+						return makeValue(result);
 					}
-					return std::make_shared<Value>();
+					return makeValue();
 				}
 
 				if (args[1]->getType() != Type::Int) {
@@ -1025,13 +1025,13 @@ namespace IkigaiScript {
 						else {
 							switch (arr.getType()) {
 								case Type::Int:
-								return std::make_shared<Value>(arr.value.asInt[ival]);
+								return makeValue(arr.value.asInt[ival]);
 								break;
 								case Type::Float:
-								return std::make_shared<Value>(arr.value.asFloat[ival]);
+								return makeValue(arr.value.asFloat[ival]);
 								break;
 								case Type::String:
-								return std::make_shared<Value>(arr.value.asString[ival]);
+								return makeValue(arr.value.asString[ival]);
 								break;
 								default:
 								throw Exception("Attempting to access array of illegal type");
@@ -1045,11 +1045,11 @@ namespace IkigaiScript {
 						// Unicode-aware: return Char at code point index
 						auto ival = args[1]->getInt();
 						char32_t cp = utf8At(var->getString(), (size_t)ival);
-						return std::make_shared<Value>(cp);
+						return makeValue(cp);
 					}
 					break;
 					default:
-					var = std::make_shared<Value>(*var);
+					var = copyValue(*var);
 					var->upconvert(Type::List);
 					[[fallthrough]];
 					case Type::List:
@@ -1082,7 +1082,7 @@ namespace IkigaiScript {
 						auto& dict = var->getDictionary();
 						auto hash = args[1]->getHash();
 						if (dict->find(hash) == dict->end()) {
-							auto newVal = std::make_shared<Value>();
+							auto newVal = makeValue();
 							newVal->typeDescriptor.isDynamic = true;
 							newVal->typeDescriptor.isInit = false; // Need to be false so assignment allows converting type
 							(*dict)[hash] = newVal;
@@ -1095,86 +1095,86 @@ namespace IkigaiScript {
 						auto& dict = var->getSet();
 						ValuePtr ref = nullptr;// (*dict)[args[1]->getHash()];
 						if (ref == nullptr) {
-							ref = std::make_shared<Value>();
+							ref = makeValue();
 						}
 						return ref;
 					}
 					break;
 				}
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 			// casting
-			{"bool", [](const List& args)
+			{"bool", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(Int(0));
+				return makeValue(Int(0));
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Int);
 			val.value.asInt = (Int)args[0]->getBool();
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"int", [](const List& args)
+			{"int", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(Int(0));
+				return makeValue(Int(0));
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Int);
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"float", [](const List& args)
+			{"float", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(Float(0.0));
+				return makeValue(Float(0.0));
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Float);
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"string", [](const List& args)
+			{"string", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(""s);
+				return makeValue(""s);
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::String);
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"array", [](const List& args)
+			{"array", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(Array());
+				return makeValue(Array());
 			}
-			auto list = std::make_shared<Value>(args);
+			auto list = makeValue(args);
 			list->hardconvert(Type::Array);
 			return list;
 		}},
 
-			{"list", [](const List& args)
+			{"list", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(List());
+				return makeValue(List());
 			}
-			return std::make_shared<Value>(args);
+			return makeValue(args);
 		}},
 
-			{"set", [](const List& args)
+			{"set", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(std::make_shared<Set>());
+				return makeValue(std::make_shared<Set>());
 			}
 			if (args.size() == 1) {
 				auto val = *args[0];
 				val.hardconvert(Type::Set);
-				return std::make_shared<Value>(val);
+				return makeValue(val);
 			}
-			auto dict = std::make_shared<Value>(std::make_shared<Set>());
+			auto dict = makeValue(std::make_shared<Set>());
 			for (auto&& arg : args) {
 				auto val = *arg;
 				val.hardconvert(Type::Set);
@@ -1183,17 +1183,17 @@ namespace IkigaiScript {
 			return dict;
 		}},
 
-			{"dictionary", [](const List& args)
+			{"dictionary", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(std::make_shared<Dictionary>());
+				return makeValue(std::make_shared<Dictionary>());
 			}
 			if (args.size() == 1) {
 				auto val = *args[0];
 				val.hardconvert(Type::Map);
-				return std::make_shared<Value>(val);
+				return makeValue(val);
 			}
-			auto dict = std::make_shared<Value>(std::make_shared<Dictionary>());
+			auto dict = makeValue(std::make_shared<Dictionary>());
 			for (auto&& arg : args) {
 				auto val = *arg;
 				val.hardconvert(Type::Map);
@@ -1202,142 +1202,142 @@ namespace IkigaiScript {
 			return dict;
 		}},
 
-			{"toarray", [](const List& args)
+			{"toarray", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(Array());
+				return makeValue(Array());
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Array);
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"tolist", [](const List& args)
+			{"tolist", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>(List());
+				return makeValue(List());
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::List);
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 			// overal stdlib
-			{"typeof", [](List args)
+			{"typeof", [this](List args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
-			return std::make_shared<Value>(getTypeName(args[0]->getType()));
+			return makeValue(getTypeName(args[0]->getType()));
 		}},
 
-			{"sqrt", [](const List& args)
+			{"sqrt", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
-			}
-			auto val = *args[0];
-			val.hardconvert(Type::Float);
-			return std::make_shared<Value>(sqrt(val.getFloat()));
-		}},
-
-			{"sin", [](const List& args)
-		{
-			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Float);
-			return std::make_shared<Value>(sin(val.getFloat()));
+			return makeValue(sqrt(val.getFloat()));
 		}},
 
-			{"cos", [](const List& args)
+			{"sin", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Float);
-			return std::make_shared<Value>(cos(val.getFloat()));
+			return makeValue(sin(val.getFloat()));
 		}},
 
-			{"tan", [](const List& args)
+			{"cos", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Float);
-			return std::make_shared<Value>(tan(val.getFloat()));
+			return makeValue(cos(val.getFloat()));
 		}},
 
-			{"pow", [](const List& args)
+			{"tan", [this](const List& args)
+		{
+			if (args.size() == 0) {
+				return makeValue();
+			}
+			auto val = *args[0];
+			val.hardconvert(Type::Float);
+			return makeValue(tan(val.getFloat()));
+		}},
+
+			{"pow", [this](const List& args)
 		{
 			if (args.size() < 2) {
-				return std::make_shared<Value>(Float(0));
+				return makeValue(Float(0));
 			}
 			auto val = *args[0];
 			val.hardconvert(Type::Float);
 			auto val2 = *args[1];
 			val2.hardconvert(Type::Float);
-			return std::make_shared<Value>(pow(val.getFloat(), val2.getFloat()));
+			return makeValue(pow(val.getFloat(), val2.getFloat()));
 		}},
 
-			{"abs", [](const List& args)
+			{"abs", [this](const List& args)
 		{
 			if (args.size() == 0) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			switch (args[0]->getType()) {
 				case Type::Int:
-				return std::make_shared<Value>(Int(abs(args[0]->getInt())));
+				return makeValue(Int(abs(args[0]->getInt())));
 				break;
 				case Type::Float:
-				return std::make_shared<Value>(Float(fabs(args[0]->getFloat())));
+				return makeValue(Float(fabs(args[0]->getFloat())));
 				break;
 				default:
-				return std::make_shared<Value>();
+				return makeValue();
 				break;
 			}
 		}},
 
-			{"min", [](const List& args)
+			{"min", [this](const List& args)
 		{
 			if (args.size() < 2) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto val = *args[0];
 			auto val2 = *args[1];
 			upconvertThrowOnNonNumberToNumberCompare(val, val2);
 			if (val > val2) {
-				return std::make_shared<Value>(val2);
+				return makeValue(val2);
 			}
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"max", [](const List& args)
+			{"max", [this](const List& args)
 		{
 			if (args.size() < 2) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto val = *args[0];
 			auto val2 = *args[1];
 			upconvertThrowOnNonNumberToNumberCompare(val, val2);
 			if (val < val2) {
-				return std::make_shared<Value>(val2);
+				return makeValue(val2);
 			}
-			return std::make_shared<Value>(val);
+			return makeValue(val);
 		}},
 
-			{"swap", [](const List& args)
+			{"swap", [this](const List& args)
 		{
 			if (args.size() < 2) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto v = *args[0];
 			*args[0] = *args[1];
 			*args[1] = v;
 
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
 			{"print", [this](const List& args)
@@ -1352,18 +1352,18 @@ namespace IkigaiScript {
 #ifndef  TEST_MOD
 			printf("\n");
 #endif
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"optionalHas", [](const List& args)
+			{"optionalHas", [this](const List& args)
 		{
 			if (args.empty() || args[0]->getType() != Type::Optional) {
-				return std::make_shared<Value>(false);
+				return makeValue(false);
 			}
-			return std::make_shared<Value>(args[0]->getOptional() != nullptr);
+			return makeValue(args[0]->getOptional() != nullptr);
 		}},
 
-			{"optionalGet", [](const List& args)
+			{"optionalGet", [this](const List& args)
 		{
 			if (args.empty() || args[0]->getType() != Type::Optional) {
 				throw Exception("optionalGet expected an Optional value");
@@ -1375,36 +1375,36 @@ namespace IkigaiScript {
 			return inner;
 		}},
 
-			{"optionalEmpty", [](const List& args)
+			{"optionalEmpty", [this](const List& args)
 		{
-			return std::make_shared<Value>(Value::makeOptional(nullptr));
+			return makeValue(Value::makeOptional(nullptr));
 		}},
 
-			{"resultOk", [](const List& args)
-		{
-			if (args.empty()) {
-				return std::make_shared<Value>(Value::makeResultOk(std::make_shared<Value>()));
-			}
-			return std::make_shared<Value>(Value::makeResultOk(args[0]));
-		}},
-
-			{"resultErr", [](const List& args)
+			{"resultOk", [this](const List& args)
 		{
 			if (args.empty()) {
-				return std::make_shared<Value>(Value::makeResultErr(std::make_shared<Value>()));
+				return makeValue(Value::makeResultOk(makeValue()));
 			}
-			return std::make_shared<Value>(Value::makeResultErr(args[0]));
+			return makeValue(Value::makeResultOk(args[0]));
 		}},
 
-			{"resultIsOk", [](const List& args)
+			{"resultErr", [this](const List& args)
+		{
+			if (args.empty()) {
+				return makeValue(Value::makeResultErr(makeValue()));
+			}
+			return makeValue(Value::makeResultErr(args[0]));
+		}},
+
+			{"resultIsOk", [this](const List& args)
 		{
 			if (args.empty() || args[0]->getType() != Type::Result) {
-				return std::make_shared<Value>(false);
+				return makeValue(false);
 			}
-			return std::make_shared<Value>(args[0]->resultIsOk());
+			return makeValue(args[0]->resultIsOk());
 		}},
 
-			{"resultGet", [](const List& args)
+			{"resultGet", [this](const List& args)
 		{
 			if (args.empty() || args[0]->getType() != Type::Result) {
 				throw Exception("resultGet expected a Result value");
@@ -1415,7 +1415,7 @@ namespace IkigaiScript {
 			return args[0]->resultPayload();
 		}},
 
-			{"resultGetErr", [](const List& args)
+			{"resultGetErr", [this](const List& args)
 		{
 			if (args.empty() || args[0]->getType() != Type::Result) {
 				throw Exception("resultGetErr expected a Result value");
@@ -1426,7 +1426,7 @@ namespace IkigaiScript {
 			return args[0]->resultPayload();
 		}},
 
-			{"getline", [](const List& args)
+			{"getline", [this](const List& args)
 		{
 			std::string s;
 			// blocking calls are fine
@@ -1434,15 +1434,15 @@ namespace IkigaiScript {
 			if (args.size() > 0) {
 				*args[0] = Value(s);
 			}
-			return std::make_shared<Value>(s);
+			return makeValue(s);
 		}},
 
 			{"map", [this](const List& args)
 		{
 			if (args.size() < 2 || args[1]->getType() != Type::Function) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
-			auto ret = std::make_shared<Value>(List());
+			auto ret = makeValue(List());
 			auto& retList = ret->getList();
 			auto func = args[1]->getFunction();
 
@@ -1465,7 +1465,7 @@ namespace IkigaiScript {
 			{"fold", [this](const List& args)
 		{
 			if (args.size() < 3 || args[1]->getType() != Type::Function) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 
 			auto func = args[1]->getFunction();
@@ -1486,74 +1486,74 @@ namespace IkigaiScript {
 			return iter;
 		}},
 
-			{"clock", [](const List&)
+			{"clock", [this](const List&)
 		{
-			return std::make_shared<Value>(Int(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+			return makeValue(Int(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
 		}},
 
-			{"getduration", [](const List& args)
+			{"getduration", [this](const List& args)
 		{
 			if (args.size() == 2 && args[0]->getType() == Type::Int && args[1]->getType() == Type::Int) {
 				std::chrono::duration<double> duration = std::chrono::high_resolution_clock::time_point(std::chrono::nanoseconds(args[1]->getInt())) -
 					std::chrono::high_resolution_clock::time_point(std::chrono::nanoseconds(args[0]->getInt()));
-				return std::make_shared<Value>(Float(duration.count()));
+				return makeValue(Float(duration.count()));
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"timesince", [](const List& args)
+			{"timesince", [this](const List& args)
 		{
 			if (args.size() == 1 && args[0]->getType() == Type::Int) {
 				std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() -
 					std::chrono::high_resolution_clock::time_point(std::chrono::nanoseconds(args[0]->getInt()));
-				return std::make_shared<Value>(Float(duration.count()));
+				return makeValue(Float(duration.count()));
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
 			// collection functions
-			{"length", [](const List& args)
+			{"length", [this](const List& args)
 		{
 			if (args.size() == 0 || (int)args[0]->getType() < (int)Type::String) {
-				return std::make_shared<Value>(Int(0));
+				return makeValue(Int(0));
 			}
 			if (args[0]->getType() == Type::String) {
 				// Return Unicode code point count, not byte count
-				return std::make_shared<Value>((Int)utf8Length(args[0]->getString()));
+				return makeValue((Int)utf8Length(args[0]->getString()));
 			}
 			if (args[0]->getType() == Type::Array) {
-				return std::make_shared<Value>((Int)args[0]->getArray().size());
+				return makeValue((Int)args[0]->getArray().size());
 			}
 			if (args[0]->getType() == Type::Set) {
-				return std::make_shared<Value>((Int)args[0]->getSet()->size());
+				return makeValue((Int)args[0]->getSet()->size());
 			}
 			if (args[0]->getType() == Type::Map) {
-				return std::make_shared<Value>((Int)args[0]->getDictionary()->size());
+				return makeValue((Int)args[0]->getDictionary()->size());
 			}
 			if (args[0]->getType() == Type::List) {
-				return std::make_shared<Value>((Int)args[0]->getList().size());
+				return makeValue((Int)args[0]->getList().size());
 			}
 			throw Exception("Malformed syntax: unexpected token");
 		}},
 
-			{"find", [](const List& args)
+			{"find", [this](const List& args)
 		{
 			if (args.size() < 2) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			// String substring search — returns code point index or null
 			if (args[0]->getType() == Type::String) {
 				if (args[1]->getType() != Type::String) {
-					return std::make_shared<Value>();
+					return makeValue();
 				}
 				size_t startCp = (args.size() >= 3 && args[2]->getType() == Type::Int)
 					? (size_t)args[2]->getInt() : 0;
 				int idx = utf8Find(args[0]->getString(), args[1]->getString(), startCp);
-				if (idx < 0) return std::make_shared<Value>();
-				return std::make_shared<Value>((Int)idx);
+				if (idx < 0) return makeValue();
+				return makeValue((Int)idx);
 			}
 			if ((int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Array) {
 				if (args[1]->getType() == args[0]->getArray().getType()) {
@@ -1563,9 +1563,9 @@ namespace IkigaiScript {
 							auto& arry = args[0]->getStdVector<Int>();
 							auto iter = find(arry.begin(), arry.end(), args[1]->getInt());
 							if (iter == arry.end()) {
-								return std::make_shared<Value>();
+								return makeValue();
 							}
-							return std::make_shared<Value>((Int)(iter - arry.begin()));
+							return makeValue((Int)(iter - arry.begin()));
 						}
 						break;
 						case Type::Float:
@@ -1573,9 +1573,9 @@ namespace IkigaiScript {
 							auto& arry = args[0]->getStdVector<Float>();
 							auto iter = find(arry.begin(), arry.end(), args[1]->getFloat());
 							if (iter == arry.end()) {
-								return std::make_shared<Value>();
+								return makeValue();
 							}
-							return std::make_shared<Value>((Int)(iter - arry.begin()));
+							return makeValue((Int)(iter - arry.begin()));
 						}
 						break;
 						case Type::String:
@@ -1583,9 +1583,9 @@ namespace IkigaiScript {
 							auto& arry = args[0]->getStdVector<std::string>();
 							auto iter = find(arry.begin(), arry.end(), args[1]->getString());
 							if (iter == arry.end()) {
-								return std::make_shared<Value>();
+								return makeValue();
 							}
-							return std::make_shared<Value>((Int)(iter - arry.begin()));
+							return makeValue((Int)(iter - arry.begin()));
 						}
 						break;
 						case Type::Function:
@@ -1593,30 +1593,30 @@ namespace IkigaiScript {
 							auto& arry = args[0]->getStdVector<FunctionRef>();
 							auto iter = find(arry.begin(), arry.end(), args[1]->getFunction());
 							if (iter == arry.end()) {
-								return std::make_shared<Value>();
+								return makeValue();
 							}
-							return std::make_shared<Value>((Int)(iter - arry.begin()));
+							return makeValue((Int)(iter - arry.begin()));
 						}
 						break;
 						default:
 						break;
 					}
 				}
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto& list = args[0]->getList();
 			for (size_t i = 0; i < list.size(); ++i) {
 				if (*list[i] == *args[1]) {
-					return std::make_shared<Value>((Int)i);
+					return makeValue((Int)i);
 				}
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"erase", [](const List& args)
+			{"erase", [this](const List& args)
 		{
 			if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array || args[1]->getType() != Type::Int) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 
 			if (args[0]->getType() == Type::Array) {
@@ -1643,13 +1643,13 @@ namespace IkigaiScript {
 			else {
 				args[0]->getList().erase(args[0]->getList().begin() + args[1]->getInt());
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"pushback", [](const List& args)
+			{"pushback", [this](const List& args)
 		{
 			if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 
 			if (args[0]->getType() == Type::Array) {
@@ -1675,13 +1675,13 @@ namespace IkigaiScript {
 			else {
 				args[0]->getList().push_back(args[1]);
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"popback", [](const List& args)
+			{"popback", [this](const List& args)
 		{
 			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Array) {
 				args[0]->getArray().pop_back();
@@ -1689,13 +1689,13 @@ namespace IkigaiScript {
 			else {
 				args[0]->getList().pop_back();
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"popfront", [](const List& args)
+			{"popfront", [this](const List& args)
 		{
 			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Array) {
 				switch (args[0]->getArray().getType()) {
@@ -1733,68 +1733,68 @@ namespace IkigaiScript {
 				auto& list = args[0]->getList();
 				list.erase(list.begin());
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"front", [](const List& args)
+			{"front", [this](const List& args)
 		{
 			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Array) {
 				switch (args[0]->getArray().getType()) {
 					case Type::Int:
-					return std::make_shared<Value>(args[0]->getStdVector<Int>().front());
+					return makeValue(args[0]->getStdVector<Int>().front());
 					case Type::Float:
-					return std::make_shared<Value>(args[0]->getStdVector<Float>().front());
+					return makeValue(args[0]->getStdVector<Float>().front());
 					case Type::Function:
-					return std::make_shared<Value>(args[0]->getStdVector<FunctionRef>().front());
+					return makeValue(args[0]->getStdVector<FunctionRef>().front());
 					case Type::String:
-					return std::make_shared<Value>(args[0]->getStdVector<std::string>().front());
+					return makeValue(args[0]->getStdVector<std::string>().front());
 					default:
 					break;
 				}
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			else {
 				return args[0]->getList().front();
 			}
 		}},
 
-			{"back", [](const List& args)
+			{"back", [this](const List& args)
 		{
 			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Array) {
 				switch (args[0]->getArray().getType()) {
 					case Type::Int:
-					return std::make_shared<Value>(args[0]->getStdVector<Int>().back());
+					return makeValue(args[0]->getStdVector<Int>().back());
 					case Type::Float:
-					return std::make_shared<Value>(args[0]->getStdVector<Float>().back());
+					return makeValue(args[0]->getStdVector<Float>().back());
 					case Type::Function:
-					return std::make_shared<Value>(args[0]->getStdVector<FunctionRef>().back());
+					return makeValue(args[0]->getStdVector<FunctionRef>().back());
 					case Type::String:
-					return std::make_shared<Value>(args[0]->getStdVector<std::string>().back());
+					return makeValue(args[0]->getStdVector<std::string>().back());
 					default:
 					break;
 				}
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			else {
 				return args[0]->getList().back();
 			}
 		}},
 
-			{"reverse", [](const List& args)
+			{"reverse", [this](const List& args)
 		{
 			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::String) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
-			auto copy = std::make_shared<Value>(*args[0]);
+			auto copy = copyValue(*args[0]);
 
 			if (args[0]->getType() == Type::String) {
-				return std::make_shared<Value>(utf8Reverse(args[0]->getString()));
+				return makeValue(utf8Reverse(args[0]->getString()));
 			}
 			else if (args[0]->getType() == Type::Array) {
 				switch (copy->getArray().getType()) {
@@ -1835,14 +1835,14 @@ namespace IkigaiScript {
 				std::reverse(vl.begin(), vl.end());
 				return copy;
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"range", [](const List& args)
+			{"range", [this](const List& args)
 		{
 			if (args.size() == 2 && args[0]->getType() == args[1]->getType()) {
 				if (args[0]->getType() == Type::Int) {
-					auto ret = std::make_shared<Value>(Array(std::vector<Int>{}));
+					auto ret = makeValue(Array(std::vector<Int>{}));
 					auto& arry = ret->getStdVector<Int>();
 					auto a = args[0]->getInt();
 					auto b = args[1]->getInt();
@@ -1861,7 +1861,7 @@ namespace IkigaiScript {
 					return ret;
 				}
 				else if (args[0]->getType() == Type::Float) {
-					auto ret = std::make_shared<Value>(Array(std::vector<Float>{}));
+					auto ret = makeValue(Array(std::vector<Float>{}));
 					auto& arry = ret->getStdVector<Float>();
 					Float a = args[0]->getFloat();
 					Float b = args[1]->getFloat();
@@ -1881,7 +1881,7 @@ namespace IkigaiScript {
 				}
 			}
 			if (args.size() < 3 || (int)args[0]->getType() < (int)Type::String) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			auto indexA = *args[1];
 			indexA.hardconvert(Type::Int);
@@ -1892,22 +1892,22 @@ namespace IkigaiScript {
 
 			if (args[0]->getType() == Type::String) {
 				// intdexA = start code point, intdexB = count of code points
-				return std::make_shared<Value>(utf8Substr(args[0]->getString(), (size_t)intdexA, (size_t)intdexB));
+				return makeValue(utf8Substr(args[0]->getString(), (size_t)intdexA, (size_t)intdexB));
 			}
 			else if (args[0]->getType() == Type::Array) {
 				if (args[0]->getArray().getType() == args[1]->getType()) {
 					switch (args[0]->getArray().getType()) {
 						case Type::Int:
-						return std::make_shared<Value>(Array(std::vector<Int>(args[0]->getStdVector<Int>().begin() + intdexA, args[0]->getStdVector<Int>().begin() + intdexB)));
+						return makeValue(Array(std::vector<Int>(args[0]->getStdVector<Int>().begin() + intdexA, args[0]->getStdVector<Int>().begin() + intdexB)));
 						break;
 						case Type::Float:
-						return std::make_shared<Value>(Array(std::vector<Float>(args[0]->getStdVector<Float>().begin() + intdexA, args[0]->getStdVector<Float>().begin() + intdexB)));
+						return makeValue(Array(std::vector<Float>(args[0]->getStdVector<Float>().begin() + intdexA, args[0]->getStdVector<Float>().begin() + intdexB)));
 						break;
 						case Type::String:
-						return std::make_shared<Value>(Array(std::vector<std::string>(args[0]->getStdVector<std::string>().begin() + intdexA, args[0]->getStdVector<std::string>().begin() + intdexB)));
+						return makeValue(Array(std::vector<std::string>(args[0]->getStdVector<std::string>().begin() + intdexA, args[0]->getStdVector<std::string>().begin() + intdexB)));
 						break;
 						case Type::Function:
-						return std::make_shared<Value>(Array(std::vector<FunctionRef>(args[0]->getStdVector<FunctionRef>().begin() + intdexA, args[0]->getStdVector<FunctionRef>().begin() + intdexB)));
+						return makeValue(Array(std::vector<FunctionRef>(args[0]->getStdVector<FunctionRef>().begin() + intdexA, args[0]->getStdVector<FunctionRef>().begin() + intdexB)));
 						break;
 						default:
 						break;
@@ -1915,15 +1915,15 @@ namespace IkigaiScript {
 				}
 			}
 			else {
-				return std::make_shared<Value>(List(args[0]->getList().begin() + intdexA, args[0]->getList().begin() + intdexB));
+				return makeValue(List(args[0]->getList().begin() + intdexA, args[0]->getList().begin() + intdexB));
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"replace", [](const List& args)
+			{"replace", [this](const List& args)
 		{
 			if (args.size() < 3 || args[0]->getType() != Type::String || args[1]->getType() != Type::String || args[2]->getType() != Type::String) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 
 			std::string& input = args[0]->getString();
@@ -1936,75 +1936,75 @@ namespace IkigaiScript {
 				lpos = pos + replacewith.size();
 			}
 
-			return std::make_shared<Value>(input);
+			return makeValue(input);
 		}},
 
-			{"startswith", [](const List& args)
+			{"startswith", [this](const List& args)
 		{
 			if (args.size() < 2 || args[0]->getType() != Type::String || args[1]->getType() != Type::String) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
-			return std::make_shared<Value>(Int(startswith(args[0]->getString(), args[1]->getString())));
+			return makeValue(Int(startswith(args[0]->getString(), args[1]->getString())));
 		}},
 
-			{"endswith", [](const List& args)
+			{"endswith", [this](const List& args)
 		{
 			if (args.size() < 2 || args[0]->getType() != Type::String || args[1]->getType() != Type::String) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
-			return std::make_shared<Value>(Int(endswith(args[0]->getString(), args[1]->getString())));
+			return makeValue(Int(endswith(args[0]->getString(), args[1]->getString())));
 		}},
 
-			{"contains", [](const List& args)
+			{"contains", [this](const List& args)
 		{
 			if (args.size() < 2 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>(Int(0));
+				return makeValue(Int(0));
 			}
 			if (args[0]->getType() == Type::Array) {
 				auto item = *args[1];
 				switch (args[0]->getArray().getType()) {
 					case Type::Int:
 					item.hardconvert(Type::Int);
-					return std::make_shared<Value>((Int)contains(args[0]->getStdVector<Int>(), item.getInt()));
+					return makeValue((Int)contains(args[0]->getStdVector<Int>(), item.getInt()));
 					case Type::Float:
 					item.hardconvert(Type::Float);
-					return std::make_shared<Value>((Int)contains(args[0]->getStdVector<Float>(), item.getFloat()));
+					return makeValue((Int)contains(args[0]->getStdVector<Float>(), item.getFloat()));
 					//case Type::Vec3:
 					//	item.hardconvert(Type::Vec3);
-					//	return std::make_shared<Value>((Int)contains(args[0]->getStdVector<vec3>(), item.getVec3()));
+					//	return makeValue((Int)contains(args[0]->getStdVector<vec3>(), item.getVec3()));
 					case Type::String:
 					item.hardconvert(Type::String);
-					return std::make_shared<Value>((Int)contains(args[0]->getStdVector<std::string>(), item.getString()));
+					return makeValue((Int)contains(args[0]->getStdVector<std::string>(), item.getString()));
 					default:
 					break;
 				}
-				return std::make_shared<Value>(Int(0));
+				return makeValue(Int(0));
 			}
 			auto& list = args[0]->getList();
 			for (size_t i = 0; i < list.size(); ++i) {
 				if (*list[i] == *args[1]) {
-					return std::make_shared<Value>(Int(1));
+					return makeValue(Int(1));
 				}
 			}
-			return std::make_shared<Value>(Int(0));
+			return makeValue(Int(0));
 		}},
 
-			{"split", [](const List& args)
+			{"split", [this](const List& args)
 		{
 			if (args.size() > 0 && args[0]->getType() == Type::String) {
 				if (args.size() == 1) {
 					// Split by code points, not bytes
-					return std::make_shared<Value>(Array(utf8SplitCodePoints(args[0]->getString())));
+					return makeValue(Array(utf8SplitCodePoints(args[0]->getString())));
 				}
-				return std::make_shared<Value>(Array(split(args[0]->getString(), args[1]->getPrintString())));
+				return makeValue(Array(split(args[0]->getString(), args[1]->getPrintString())));
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 
-			{"sort", [](const List& args)
+			{"sort", [this](const List& args)
 		{
 			if (args.size() < 1 || (int)args[0]->getType() < (int)Type::Array) {
-				return std::make_shared<Value>();
+				return makeValue();
 			}
 			if (args[0]->getType() == Type::Array) {
 				switch (args[0]->getArray().getType()) {
@@ -2054,7 +2054,7 @@ namespace IkigaiScript {
 				}
 				return callFunction(func->getFunction(), list);
 			}
-			return std::make_shared<Value>();
+			return makeValue();
 		}},
 			});
 
@@ -2090,7 +2090,7 @@ namespace IkigaiScript {
 
 	ValuePtr IkigaiScriptInterpreter::callCoro(CoroRef coro) {
 		if (!coro->isActive()) {
-			return std::make_shared<Value>();
+			return makeValue();
 		}
 		switch (coro->func->getBodyType()) {
 			case FunctionBodyType::Subexpressions:
@@ -2138,7 +2138,7 @@ namespace IkigaiScript {
 					// If we walked off the end without Return/Yield, the coro is done
 					if (coro->state == TaskState::Running || coro->state == TaskState::Created) {
 						coro->state = TaskState::Completed;
-						if (!coro->result) coro->result = std::make_shared<Value>();
+						if (!coro->result) coro->result = makeValue();
 						closeScope(coro->scope);
 					}
 				}
@@ -2147,7 +2147,7 @@ namespace IkigaiScript {
 					closeScope(coro->scope);
 					throw;
 				}
-				return returnVal ? returnVal : std::make_shared<Value>();
+				return returnVal ? returnVal : makeValue();
 			}
 			case FunctionBodyType::Bytecode:
 			{
@@ -2170,7 +2170,7 @@ namespace IkigaiScript {
 			default: throw Exception("Malformed syntax: unexpected token");
 		}
 
-		return std::make_shared<Value>();
+		return makeValue();
 	}
 
 	// Build a type-name string (e.g. "Int", "String") from a runtime TypeDescriptor,
@@ -2389,7 +2389,7 @@ namespace IkigaiScript {
 						}
 						vargs.push_back(args[i]);
 					}
-					ref = std::make_shared<Value>(vargs);
+					ref = makeValue(vargs);
 				}
 
 				if (fnc->isCoro) {
@@ -2400,7 +2400,7 @@ namespace IkigaiScript {
 					coroRes->scope = scope;
 					coroRes->classs = classs;
 					coroRes->token = CancellationToken::make();
-					return std::make_shared<Value>(coroRes);
+					return makeValue(coroRes);
 				}
 
 				ValuePtr returnVal = nullptr;
@@ -2425,10 +2425,10 @@ namespace IkigaiScript {
 							for (auto&& sub : subexpressions) {
 								getValue(sub, scope, classs);
 							}
-							returnVal = std::make_shared<Value>();
+							returnVal = makeValue();
 						}
 						else {
-							returnVal = std::make_shared<Value>(make_shared<Class>(scope));
+							returnVal = makeValue(make_shared<Class>(scope));
 							returnVal->typeDescriptor.subtype = fnc->name;
 							auto activeClasss = returnVal->getClass().get();
 							if (!hasExplicitSuperCall(subexpressions)) {
@@ -2472,24 +2472,24 @@ namespace IkigaiScript {
 				}
 
 				if (returnVal) {
-					returnVal = std::make_shared<Value>(*returnVal);
+					returnVal = copyValue(*returnVal);
 				}
 				closeScope(scope);
-				return returnVal ? returnVal : std::make_shared<Value>();
+				return returnVal ? returnVal : makeValue();
 			}
 			case FunctionBodyType::Lambda:
 			{
 				scope = newScope(fnc->name, scope);
 				auto returnVal = get<Lambda>(fnc->body)(args);
 				closeScope(scope);
-				return returnVal ? returnVal : std::make_shared<Value>();
+				return returnVal ? returnVal : makeValue();
 			}
 			case FunctionBodyType::ScopedLambda:
 			{
 				scope = newScope(fnc->name, scope);
 				auto returnVal = get<ScopedLambda>(fnc->body)(scope, args);
 				closeScope(scope);
-				return returnVal ? returnVal : std::make_shared<Value>();
+				return returnVal ? returnVal : makeValue();
 			}
 			case FunctionBodyType::ClassLambda:
 			{
@@ -2499,9 +2499,9 @@ namespace IkigaiScript {
 					if (isBaseConstructorCall) {
 						get<ClassLambda>(fnc->body)(classs, scope, args);
 						closeScope(scope);
-						return std::make_shared<Value>();
+						return makeValue();
 					}
-					auto returnVal = make_shared<Value>(make_shared<Class>(scope));
+					auto returnVal = makeValue(make_shared<Class>(scope));
 					returnVal->typeDescriptor.subtype = fnc->name;
 					get<ClassLambda>(fnc->body)(returnVal->getClass().get(), scope, args);
 					closeScope(scope);
@@ -2525,7 +2525,7 @@ namespace IkigaiScript {
 		}
 
 		//empty func
-		return std::make_shared<Value>();
+		return makeValue();
 	}
 
 	FunctionRef IkigaiScriptInterpreter::newFunction(const std::string& name, ScopePtr scope, FunctionRef func) {
@@ -2618,14 +2618,14 @@ namespace IkigaiScript {
 	// name resolution for variables
 	ValuePtr& IkigaiScriptInterpreter::resolveVariable(const std::string& name, ScopePtr scope) {
 		if (name == "super") {
-			static ValuePtr superVal = std::make_shared<Value>("super");
-			return superVal;
-		}
-		auto initialScope = scope;
-		while (scope) {
-			auto iter = scope->variables.find(name);
-			if (iter != scope->variables.end()) {
-				if (dependencyManager.isCollecting()) {
+		static ValuePtr superVal = std::make_shared<Value>("super");
+		return superVal;
+	}
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->variables.find(name);
+		if (iter != scope->variables.end()) {
+			if (dependencyManager.isCollecting()) {
 					dependencyManager.recordRead(VarSlot{iter->second.get()});
 				}
 				return iter->second;
@@ -2645,7 +2645,7 @@ namespace IkigaiScript {
 				}
 			}
 		}
-		auto& ret = initialScope->insertVar(name, std::make_shared<Value>());
+		auto& ret = initialScope->insertVar(name, makeValue());
 		if (dependencyManager.isCollecting()) {
 			dependencyManager.recordRead(VarSlot{ret.get()});
 		}
@@ -2664,18 +2664,18 @@ namespace IkigaiScript {
 
 	ValuePtr& IkigaiScriptInterpreter::resolveVariableForWrite(const std::string& name, ScopePtr scope) {
 		if (name == "super") {
-			static ValuePtr superVal = std::make_shared<Value>("super");
-			return superVal;
-		}
-		auto initialScope = scope;
-		while (scope) {
-			auto iter = scope->variables.find(name);
-			if (iter != scope->variables.end()) {
-				if (initialScope != scope) {
+		static ValuePtr superVal = std::make_shared<Value>("super");
+		return superVal;
+	}
+	auto initialScope = scope;
+	while (scope) {
+		auto iter = scope->variables.find(name);
+		if (iter != scope->variables.end()) {
+			if (initialScope != scope) {
 					auto s = initialScope;
 					while (s && s != scope) {
 						if (s->isTransactionScope) {
-							s->variables[name] = std::make_shared<Value>(*iter->second);
+							s->variables[name] = copyValue(*iter->second);
 							if (dependencyManager.isCollecting()) {
 								dependencyManager.recordRead(VarSlot{s->variables[name].get()});
 							}
@@ -2699,7 +2699,7 @@ namespace IkigaiScript {
 				auto s = initialScope;
 				while (s) {
 					if (s->isTransactionScope) {
-						s->variables[name] = std::make_shared<Value>(*iter->second);
+						s->variables[name] = copyValue(*iter->second);
 						if (dependencyManager.isCollecting()) {
 							dependencyManager.recordRead(VarSlot{s->variables[name].get()});
 						}
@@ -2716,7 +2716,7 @@ namespace IkigaiScript {
 		auto s = initialScope;
 		while (s) {
 			if (s->isTransactionScope) {
-				auto& ret = s->insertVar(name, std::make_shared<Value>());
+				auto& ret = s->insertVar(name, makeValue());
 				if (dependencyManager.isCollecting()) {
 					dependencyManager.recordRead(VarSlot{ret.get()});
 				}
@@ -2724,7 +2724,7 @@ namespace IkigaiScript {
 			}
 			s = s->parent;
 		}
-		auto& ret = initialScope->insertVar(name, std::make_shared<Value>());
+		auto& ret = initialScope->insertVar(name, makeValue());
 		if (dependencyManager.isCollecting()) {
 			dependencyManager.recordRead(VarSlot{ret.get()});
 		}
@@ -3105,11 +3105,11 @@ namespace IkigaiScript {
 		auto returnDefExpr = [&checkLoopInterupt, this]() -> ExpressionPtr
 		{
 			switch (checkLoopInterupt) {
-				case LoopInterupt::None: return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
+				case LoopInterupt::None: return arena.make<ValueNode>(makeValue(), ExpressionType::Value);
 				case LoopInterupt::Break: return arena.make<Break>();
 				case LoopInterupt::Continue: return arena.make<Continue>();
 			}
-			return arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
+			return arena.make<ValueNode>(makeValue(), ExpressionType::Value);
 		};
 		switch (exp->type) {
 			case ExpressionType::DefineVar:
@@ -3125,7 +3125,7 @@ namespace IkigaiScript {
 						val = it->second;
 					}
 					else {
-						val = std::make_shared<Value>();
+						val = makeValue();
 						val->typeDescriptor = td;
 						scope->variables[def->name] = val;
 					}
@@ -3136,7 +3136,7 @@ namespace IkigaiScript {
 				auto val = getValue(def->defineExpression, scope, classs);
 				// Declaration without initializer: var n: Int; / var a: Int?;
 				if (!val && !def->defineExpression) {
-					val = std::make_shared<Value>();
+					val = makeValue();
 					TypeDescriptor td = def->typeDescriptor;
 					td.isInit = false;
 					val->typeDescriptor = td;
@@ -3144,7 +3144,7 @@ namespace IkigaiScript {
 					return arena.make<ValueNode>(val);
 				}
 				if (def->isLive && val) {
-					val = std::make_shared<Value>(*val);
+					val = copyValue(*val);
 				}
 				// --- Tuple destructuring: var (a, b) = expr ---
 				if (!def->patternNames.empty()) {
@@ -3159,7 +3159,7 @@ namespace IkigaiScript {
 					ValuePtr lastBound;
 					for (size_t i = 0; i < def->patternNames.size(); ++i) {
 						if (def->patternNames[i] == "_") continue;
-						auto elem = std::make_shared<Value>(*items[i]);
+						auto elem = copyValue(*items[i]);
 						TypeDescriptor td = def->typeDescriptor;
 						if (td.type == Type::Null) {
 							td.type = elem->getType();
@@ -3169,7 +3169,7 @@ namespace IkigaiScript {
 						else {
 							if (!def->typeDescriptor.isDynamic) {
 								if (td.type == Type::Float && elem->getType() == Type::Int) {
-									elem = std::make_shared<Value>((Float)elem->getInt());
+									elem = makeValue((Float)elem->getInt());
 								}
 								else if (!checkConvertTypes(td, elem->typeDescriptor, this)) {
 									throw TypeConvertError(td, elem->typeDescriptor);
@@ -3181,13 +3181,13 @@ namespace IkigaiScript {
 						scope->variables[def->patternNames[i]] = elem;
 						lastBound = elem;
 					}
-					return arena.make<ValueNode>(lastBound ? lastBound : std::make_shared<Value>());
+					return arena.make<ValueNode>(lastBound ? lastBound : makeValue());
 				}
 
 				if (!def->typeDescriptor.isDynamic && def->typeDescriptor.type != Type::Null
 					&& def->typeDescriptor.type != val->getType()) {
 					if (def->typeDescriptor.type == Type::Float && val->getType() == Type::Int) {
-						val = std::make_shared<Value>((Float)val->getInt());
+						val = makeValue((Float)val->getInt());
 					}
 				}
 				if (!def->typeDescriptor.isDynamic && def->typeDescriptor.type != Type::Null) {
@@ -3403,11 +3403,11 @@ namespace IkigaiScript {
 						auto lhs = getValue(funcExpr->subexpressions[0], scope, classs);
 						bool lhsTruthy = lhs->getBool();
 						if (opName == "&&" && !lhsTruthy)
-							return arena.make<ValueNode>(std::make_shared<Value>(Int(0)));
+							return arena.make<ValueNode>(makeValue(Int(0)));
 						if (opName == "||" && lhsTruthy)
-							return arena.make<ValueNode>(std::make_shared<Value>(Int(1)));
+							return arena.make<ValueNode>(makeValue(Int(1)));
 						auto rhs = getValue(funcExpr->subexpressions[1], scope, classs);
-						return arena.make<ValueNode>(std::make_shared<Value>(Int(rhs->getBool() ? 1 : 0)));
+						return arena.make<ValueNode>(makeValue(Int(rhs->getBool() ? 1 : 0)));
 					}
 				}
 
@@ -3539,7 +3539,7 @@ namespace IkigaiScript {
 					return arena.make<ValueNode>(yieldVal, ExpressionType::Yield);
 				}
 				else {
-					return arena.make<ValueNode>(std::make_shared<Value>(resultList));
+					return arena.make<ValueNode>(makeValue(resultList));
 				}
 			}
 			break;
@@ -3562,22 +3562,22 @@ namespace IkigaiScript {
 				auto handleIteration = [&](size_t idx, ValuePtr key, ValuePtr val)
 				{
 					if (foreachExp->iterateNames.size() == 1) {
-						scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(*val);
+						scope->variables[foreachExp->iterateNames[0]] = copyValue(*val);
 					}
 					else if (foreachExp->iterateNames.size() == 2) {
 						if (list->getType() == Type::Map) {
-							scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(*key);
-							scope->variables[foreachExp->iterateNames[1]] = std::make_shared<Value>(*val);
+							scope->variables[foreachExp->iterateNames[0]] = copyValue(*key);
+							scope->variables[foreachExp->iterateNames[1]] = copyValue(*val);
 						}
 						else {
-							scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(Int(idx));
-							scope->variables[foreachExp->iterateNames[1]] = std::make_shared<Value>(*val);
+							scope->variables[foreachExp->iterateNames[0]] = makeValue(Int(idx));
+							scope->variables[foreachExp->iterateNames[1]] = copyValue(*val);
 						}
 					}
 					else if (foreachExp->iterateNames.size() == 3 && list->getType() == Type::Map) {
-						scope->variables[foreachExp->iterateNames[0]] = std::make_shared<Value>(Int(idx));
-						scope->variables[foreachExp->iterateNames[1]] = std::make_shared<Value>(*key);
-						scope->variables[foreachExp->iterateNames[2]] = std::make_shared<Value>(*val);
+						scope->variables[foreachExp->iterateNames[0]] = makeValue(Int(idx));
+						scope->variables[foreachExp->iterateNames[1]] = copyValue(*key);
+						scope->variables[foreachExp->iterateNames[2]] = copyValue(*val);
 					}
 
 					size_t deferMark = scope->deferred.size();
@@ -3594,7 +3594,7 @@ namespace IkigaiScript {
 				size_t idx = 0;
 				if (list->getType() == Type::Map) {
 					for (auto&& in : *list->getDictionary().get()) {
-						handleIteration(idx++, std::make_shared<Value>(in.first), in.second);
+						handleIteration(idx++, makeValue(in.first), in.second);
 						if (shouldStop()) break;
 					}
 				}
@@ -3616,21 +3616,21 @@ namespace IkigaiScript {
 						case Type::Int:
 						{
 							for (auto&& in : list->getStdVector<Int>()) {
-								handleIteration(idx++, nullptr, std::make_shared<Value>(in));
+								handleIteration(idx++, nullptr, makeValue(in));
 								if (shouldStop()) break;
 							}
 						} break;
 						case Type::Float:
 						{
 							for (auto&& in : list->getStdVector<Float>()) {
-								handleIteration(idx++, nullptr, std::make_shared<Value>(in));
+								handleIteration(idx++, nullptr, makeValue(in));
 								if (shouldStop()) break;
 							}
 						} break;
 						case Type::String:
 						{
 							for (auto&& in : list->getStdVector<std::string>()) {
-								handleIteration(idx++, nullptr, std::make_shared<Value>(in));
+								handleIteration(idx++, nullptr, makeValue(in));
 								if (shouldStop()) break;
 							}
 						} break;
@@ -3641,7 +3641,7 @@ namespace IkigaiScript {
 					auto& rv = list->getRange();
 					Int limit = rv.inclusive ? rv.end_ : rv.end_ - 1;
 					for (Int i = rv.start; i <= limit; ++i) {
-						handleIteration(idx++, nullptr, std::make_shared<Value>(i));
+						handleIteration(idx++, nullptr, makeValue(i));
 						if (shouldStop()) break;
 					}
 				}
@@ -3674,25 +3674,25 @@ namespace IkigaiScript {
 							if (firstType == Type::Int) {
 								std::vector<Int> res;
 								for (auto& r : results) res.push_back(r->getInt());
-								return arena.make<ValueNode>(std::make_shared<Value>(Array(res)), ExpressionType::Value);
+								return arena.make<ValueNode>(makeValue(Array(res)), ExpressionType::Value);
 							}
 							else if (firstType == Type::Float) {
 								std::vector<Float> res;
 								for (auto& r : results) res.push_back(r->getFloat());
-								return arena.make<ValueNode>(std::make_shared<Value>(Array(res)), ExpressionType::Value);
+								return arena.make<ValueNode>(makeValue(Array(res)), ExpressionType::Value);
 							}
 							else if (firstType == Type::String) {
 								std::vector<std::string> res;
 								for (auto& r : results) res.push_back(r->getString());
-								return arena.make<ValueNode>(std::make_shared<Value>(Array(res)), ExpressionType::Value);
+								return arena.make<ValueNode>(makeValue(Array(res)), ExpressionType::Value);
 							}
 						}
 						// Default to List if heterogeneous or complex type
 						List lst;
 						for (auto& r : results) lst.push_back(r);
-						return arena.make<ValueNode>(std::make_shared<Value>(lst), ExpressionType::Value);
+						return arena.make<ValueNode>(makeValue(lst), ExpressionType::Value);
 					}
-					return arena.make<ValueNode>(std::make_shared<Value>(Array(std::vector<Int>{})), ExpressionType::Value);
+					return arena.make<ValueNode>(makeValue(Array(std::vector<Int>{})), ExpressionType::Value);
 				}
 			}
 			break;
@@ -3794,7 +3794,7 @@ namespace IkigaiScript {
 				for (auto& elem : tupleExpr->elements) {
 					items.push_back(getValue(elem, scope, classs));
 				}
-				return arena.make<ValueNode>(std::make_shared<Value>(Value::makeTuple(std::move(items))), ExpressionType::Value);
+				return arena.make<ValueNode>(makeValue(Value::makeTuple(std::move(items))), ExpressionType::Value);
 			}
 			break;
 			case ExpressionType::DestructuringAssign:
@@ -3811,7 +3811,7 @@ namespace IkigaiScript {
 				}
 				std::vector<std::shared_ptr<Value>> copies;
 				copies.reserve(items.size());
-				for (auto& item : items) copies.push_back(std::make_shared<Value>(*item));
+				for (auto& item : items) copies.push_back(copyValue(*item));
 
 				ValuePtr lastAssigned;
 				for (size_t i = 0; i < da->patternNames.size(); ++i) {
@@ -3848,13 +3848,13 @@ namespace IkigaiScript {
 					}
 					lastAssigned = lhs;
 				}
-				return arena.make<ValueNode>(lastAssigned ? lastAssigned : std::make_shared<Value>());
+				return arena.make<ValueNode>(lastAssigned ? lastAssigned : makeValue());
 			}
 			break;
 			case ExpressionType::Defer:
 			{
 				registerDefer(scope, exp);
-				return arena.make<ValueNode>(std::make_shared<Value>());
+				return arena.make<ValueNode>(makeValue());
 			}
 			break;
 			case ExpressionType::SafeBlock:
@@ -3900,17 +3900,17 @@ namespace IkigaiScript {
 							innerVal = r.lastValue;
 						}
 						else {
-							innerVal = std::make_shared<Value>();
+							innerVal = makeValue();
 						}
 						// Copy output to preserve return safety
-						resultValue = std::make_shared<Value>(Value::makeOptional(std::make_shared<Value>(*innerVal)));
+						resultValue = makeValue(Value::makeOptional(makeValue(*innerVal)));
 					}
 					else {
-						resultValue = std::make_shared<Value>(Value::makeOptional(nullptr));
+						resultValue = makeValue(Value::makeOptional(nullptr));
 					}
 				}
 				else {
-					resultValue = std::make_shared<Value>(success);
+					resultValue = makeValue(success);
 				}
 
 				return arena.make<ValueNode>(resultValue);
@@ -3946,13 +3946,13 @@ namespace IkigaiScript {
 				auto task = taskVal->getTask();
 				// If the task is already completed, return its result immediately
 				if (task->state == TaskState::Completed || task->state == TaskState::Cancelled) {
-					return arena.make<ValueNode>(task->result ? task->result : std::make_shared<Value>());
+					return arena.make<ValueNode>(task->result ? task->result : makeValue());
 				}
 				// Run the task to completion synchronously (MVP: cooperative, no scheduler needed)
 				while (task->isActive()) {
 					callCoro(task);
 				}
-				return arena.make<ValueNode>(task->result ? task->result : std::make_shared<Value>());
+				return arena.make<ValueNode>(task->result ? task->result : makeValue());
 			}
 			break;
 			case ExpressionType::Spawn:
@@ -3961,7 +3961,7 @@ namespace IkigaiScript {
 				// Single-callExpr form: spawn <callable>(args)
 				if (spawnExpr->callExpr) {
 					auto taskVal = getValue(spawnExpr->callExpr, scope, classs);
-					return arena.make<ValueNode>(taskVal ? taskVal : std::make_shared<Value>());
+					return arena.make<ValueNode>(taskVal ? taskVal : makeValue());
 				}
 				// Block form: spawn { body } — wrap body in an anonymous coro-like task
 				if (!spawnExpr->subexpressions.empty()) {
@@ -3972,7 +3972,7 @@ namespace IkigaiScript {
 					if (r.explicitReturn) return arena.make<ValueNode>(r.explicitReturn);
 					if (r.lastValue)      return arena.make<ValueNode>(r.lastValue);
 				}
-				return arena.make<ValueNode>(std::make_shared<Value>());
+				return arena.make<ValueNode>(makeValue());
 			}
 			break;
 			case ExpressionType::SyncBlock:
@@ -3992,7 +3992,7 @@ namespace IkigaiScript {
 					}
 				}
 				closeScope(syncScope);
-				return arena.make<ValueNode>(std::make_shared<Value>(Value::makeTuple(results)));
+				return arena.make<ValueNode>(makeValue(Value::makeTuple(results)));
 			}
 			break;
 			case ExpressionType::RaceBlock:
@@ -4032,7 +4032,7 @@ namespace IkigaiScript {
 					if (t->token) t->token->cancel();
 					t->state = TaskState::Cancelled;
 				}
-				return arena.make<ValueNode>(winner ? winner : std::make_shared<Value>());
+				return arena.make<ValueNode>(winner ? winner : makeValue());
 			}
 			break;
 			case ExpressionType::BranchBlock:
@@ -4041,7 +4041,7 @@ namespace IkigaiScript {
 				auto branchScope = newScope("branch_body", scope);
 				needsToReturn(branchExpr->subexpressions, branchScope, classs);
 				closeScope(branchScope);
-				return arena.make<ValueNode>(std::make_shared<Value>());
+				return arena.make<ValueNode>(makeValue());
 			}
 			break;
 			default:

@@ -20,6 +20,7 @@
 #define TEST_MOD
 
 #include "arena.hpp"
+#include "value_pool.hpp"
 
 namespace IkigaiScript {
 namespace Native {
@@ -43,6 +44,11 @@ namespace Native {
 
 	class IkigaiScriptInterpreter {
 	public:
+		// valuePool MUST be the first member so it is the last destroyed,
+		// after all ValuePtr-holding members (modules, globalScope, vm stack, etc.)
+		// that call pool->deallocate in their destructors.
+		ValuePool valuePool;
+
 		std::atomic_bool data_is_ready_{};
 
 		inline static uint64_t currentLine = 0;
@@ -138,6 +144,16 @@ namespace Native {
 		ArenaAllocator arena;
 		DependencyManager dependencyManager{this};
 
+		// Allocate a new heap Value via the per-interpreter pool.
+		// Use these instead of std::make_shared<Value>() everywhere inside Library.
+		template<typename... Args>
+		ValuePtr makeValue(Args&&... args) {
+			return IkigaiScript::makeValue(valuePool, std::forward<Args>(args)...);
+		}
+		ValuePtr copyValue(const Value& v) {
+			return IkigaiScript::copyValue(valuePool, v);
+		}
+
 		ScopePtr getGlobalScope() const {
 			return globalScope;
 		}
@@ -204,12 +220,12 @@ namespace Native {
 		}
 		template <typename ... Ts>
 		ValuePtr callFunctionWithArgs(FunctionRef fnc, ScopePtr scope, Ts...args) {
-			List argsList = {make_shared<Value>(args)...};
+			List argsList = {makeValue(args)...};
 			return callFunction(fnc, scope, argsList);
 		}
 		template <typename ... Ts>
 		ValuePtr callFunctionWithArgs(FunctionRef fnc, Ts...args) {
-			List argsList = {make_shared<Value>(args)...};
+			List argsList = {makeValue(args)...};
 			return callFunction(fnc, globalScope, argsList);
 		}
 

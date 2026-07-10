@@ -163,7 +163,7 @@ namespace IkigaiScript {
 		endCollectReads(bindingId);
 
 		if (!newVal) {
-			newVal = std::make_shared<Value>();
+			newVal = interpreter->makeValue();
 		}
 
 		// Re-acquire reference after potential rehash from getValue inserting new bindings.
@@ -192,7 +192,7 @@ namespace IkigaiScript {
 			}
 			else if (newVal->getType() != binding.ownerType.type) {
 				if (binding.ownerType.type == Type::Float && newVal->getType() == Type::Int) {
-					newVal = std::make_shared<Value>(static_cast<double>(newVal->getInt()));
+					newVal = interpreter->makeValue(static_cast<double>(newVal->getInt()));
 				}
 				else if (newVal->getType() != Type::Null || !binding.ownerType.isNullable) {
 					throw TypeConvertError(binding.ownerType, newVal->typeDescriptor);

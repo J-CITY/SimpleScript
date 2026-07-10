@@ -86,7 +86,7 @@ namespace IkigaiScript {
 				auto& outer = interpreter->resolveVariable(outerName, scope);
 				Function::CaptureEntry entry;
 				entry.kind = Function::CaptureEntry::Kind::Copy;
-				entry.value = std::make_shared<Value>(*outer);
+				entry.value = interpreter->copyValue(*outer);
 				pendingCaptures.push_back({localName, std::move(entry)});
 			}
 			else {
@@ -159,14 +159,14 @@ namespace IkigaiScript {
 		}
 
 		if (pos >= val.size()) {
-			return interpreter->arena.make<ValueNode>(std::make_shared<Value>(val), ExpressionType::Value);
-		}
+		return interpreter->arena.make<ValueNode>(interpreter->makeValue(val), ExpressionType::Value);
+	}
 
-		std::string prefix = val.substr(0, pos);
-		ExpressionPtr finalExpr = nullptr;
-		if (!prefix.empty()) {
-			finalExpr = interpreter->arena.make<ValueNode>(std::make_shared<Value>(prefix), ExpressionType::Value);
-		}
+	std::string prefix = val.substr(0, pos);
+	ExpressionPtr finalExpr = nullptr;
+	if (!prefix.empty()) {
+		finalExpr = interpreter->arena.make<ValueNode>(interpreter->makeValue(prefix), ExpressionType::Value);
+	}
 
 		size_t braceDepth = 1;
 		size_t startExpr = pos + 1;
@@ -264,7 +264,7 @@ namespace IkigaiScript {
 		}
 		// Fall back to the functions map (for functions not stored as variables).
 		auto fn = interp->resolveFunction(name, scope);
-		if (fn) return std::make_shared<Value>(fn);
+		if (fn) return interp->makeValue(fn);
 		return nullptr;
 	}
 
@@ -320,7 +320,7 @@ namespace IkigaiScript {
 								if (needsUnaryPlacementFix(strings, i)) {
 									rootExpression->subexpressions.insert(rootExpression->subexpressions.begin(),
 										interpreter->arena.make<ValueNode>(
-										std::make_shared<Value>(), root));
+										interpreter->makeValue(), root));
 								}
 								else {
 									rootExpression->subexpressions.push_back(currExpression->subexpressions.back());
@@ -384,7 +384,7 @@ namespace IkigaiScript {
 						auto rootExpression = static_cast<FunctionExpression*>(root);
 						rootExpression->subexpressions.insert(rootExpression->subexpressions.begin(),
 							interpreter->arena.make<ValueNode>(
-							std::make_shared<Value>(), root));
+							interpreter->makeValue(), root));
 					}
 				}
 			}
@@ -407,7 +407,7 @@ namespace IkigaiScript {
 				auto val = std::string(strings[i].substr(1, strings[i].size() - 2));
 				replaceWhitespaceLiterals(val);
 				char32_t c = decodeCharLiteral(val);
-				auto newExpr = interpreter->arena.make<ValueNode>(std::make_shared<Value>(c), ExpressionType::Value);
+				auto newExpr = interpreter->arena.make<ValueNode>(interpreter->makeValue(c), ExpressionType::Value);
 				if (root) {
 					static_cast<FunctionExpression*>(root)->subexpressions.push_back(newExpr);
 				}
@@ -668,7 +668,7 @@ namespace IkigaiScript {
 							if (root->type == ExpressionType::FunctionCall) {
 								if (static_cast<FunctionExpression*>(root)->function->getFunction()->opPrecedence ==
 									OperatorPrecedence::func) {
-									cur = interpreter->arena.make<FunctionExpression>(std::make_shared<Value>());
+									cur = interpreter->arena.make<FunctionExpression>(interpreter->makeValue());
 									static_cast<FunctionExpression*>(cur)->subexpressions.push_back(root);
 									root = cur;
 								}
@@ -701,10 +701,10 @@ namespace IkigaiScript {
 						ValuePtr fnVal;
 						if (compileOnly) {
 							auto resolved = tryFindCallTarget(fnName, scope, interpreter);
-							fnVal = resolved ? resolved : std::make_shared<Value>(fnName);
+							fnVal = resolved ? resolved : interpreter->makeValue(fnName);
 						}
 						else {
-							fnVal = std::make_shared<Value>(fnName);
+							fnVal = interpreter->makeValue(fnName);
 						}
 						auto funccall = interpreter->arena.make<FunctionExpression>(fnVal);
 						if (root) {
@@ -771,12 +771,12 @@ namespace IkigaiScript {
 						// list literal / collection literal
 						if (root) {
 							static_cast<FunctionExpression*>(root)->subexpressions.push_back(
-								interpreter->arena.make<ValueNode>(std::make_shared<Value>(List()),
+								interpreter->arena.make<ValueNode>(interpreter->makeValue(List()),
 								ExpressionType::Value));
 							cur = static_cast<FunctionExpression*>(root)->subexpressions.back();
 						}
 						else {
-							root = interpreter->arena.make<ValueNode>(std::make_shared<Value>(List()),
+							root = interpreter->arena.make<ValueNode>(interpreter->makeValue(List()),
 								ExpressionType::Value);
 							cur = root;
 						}
@@ -786,20 +786,20 @@ namespace IkigaiScript {
 							if (nestLayers == 1 && strings[i] == ",") {
 								if (minisub.size()) {
 									auto val = *interpreter->getValue(std::move(minisub), scope, classs);
-									static_cast<ValueNode*>(cur)->value->getList().push_back(
-										std::make_shared<Value>(val));
-									minisub.clear();
-								}
+								static_cast<ValueNode*>(cur)->value->getList().push_back(
+									interpreter->makeValue(val));
+								minisub.clear();
 							}
-							else if (isClosingBracketOrParen(strings[i])) {
-								if (--nestLayers > 0) {
-									minisub.push_back(strings[i]);
-								}
-								else {
-									if (minisub.size()) {
-										auto val = *interpreter->getValue(std::move(minisub), scope, classs);
-										static_cast<ValueNode*>(cur)->value->getList().push_back(
-											std::make_shared<Value>(val));
+						}
+						else if (isClosingBracketOrParen(strings[i])) {
+							if (--nestLayers > 0) {
+								minisub.push_back(strings[i]);
+							}
+							else {
+								if (minisub.size()) {
+									auto val = *interpreter->getValue(std::move(minisub), scope, classs);
+									static_cast<ValueNode*>(cur)->value->getList().push_back(
+										interpreter->makeValue(val));
 										minisub.clear();
 									}
 								}
@@ -895,16 +895,16 @@ namespace IkigaiScript {
 				else {
 					// variable
 					ExpressionPtr newExpr;
-					if (strings[i] == "true") {
-						newExpr = interpreter->arena.make<ValueNode>(std::make_shared<Value>(true),
-							ExpressionType::Value);
-					}
-					else if (strings[i] == "false") {
-						newExpr = interpreter->arena.make<ValueNode>(std::make_shared<Value>(false),
-							ExpressionType::Value);
-					}
+				if (strings[i] == "true") {
+					newExpr = interpreter->arena.make<ValueNode>(interpreter->makeValue(true),
+						ExpressionType::Value);
+				}
+				else if (strings[i] == "false") {
+					newExpr = interpreter->arena.make<ValueNode>(interpreter->makeValue(false),
+						ExpressionType::Value);
+				}
 					else if (strings[i] == "null") {
-						newExpr = interpreter->arena.make<ValueNode>(std::make_shared<Value>(), ExpressionType::Value);
+						newExpr = interpreter->arena.make<ValueNode>(interpreter->makeValue(), ExpressionType::Value);
 					}
 					else {
 						newExpr = getResolveVarExpression(std::string(strings[i]), parseScope->isClassScope);
@@ -1916,23 +1916,23 @@ namespace IkigaiScript {
 					if (i + 2 < parseStrings.size() && parseStrings[i + 1] == "=") {
 						std::string key = std::string(parseStrings[i]);
 						std::string valStr = std::string(parseStrings[i + 2]);
-						ValuePtr val = nullptr;
-						if (valStr == "true") val = std::make_shared<Value>(true);
-						else if (valStr == "false") val = std::make_shared<Value>(false);
-						else if (valStr.size() >= 2 && valStr.front() == '"') val = std::make_shared<Value>(
-							valStr.substr(1, valStr.size() - 2));
-						else val = std::make_shared<Value>((Float)parseNumericLiteral(valStr));
-						args.push_back({key, val});
-						i += 2;
-					}
-					else if (parseStrings[i] != ",") {
-						std::string valStr = std::string(parseStrings[i]);
-						ValuePtr val = nullptr;
-						if (valStr == "true") val = std::make_shared<Value>(true);
-						else if (valStr == "false") val = std::make_shared<Value>(false);
-						else if (valStr.size() >= 2 && valStr.front() == '"') val = std::make_shared<Value>(
-							valStr.substr(1, valStr.size() - 2));
-						else val = std::make_shared<Value>((Float)parseNumericLiteral(valStr));
+					ValuePtr val = nullptr;
+					if (valStr == "true") val = interpreter->makeValue(true);
+					else if (valStr == "false") val = interpreter->makeValue(false);
+					else if (valStr.size() >= 2 && valStr.front() == '"') val = interpreter->makeValue(
+						valStr.substr(1, valStr.size() - 2));
+					else val = interpreter->makeValue((Float)parseNumericLiteral(valStr));
+					args.push_back({key, val});
+					i += 2;
+				}
+				else if (parseStrings[i] != ",") {
+					std::string valStr = std::string(parseStrings[i]);
+					ValuePtr val = nullptr;
+					if (valStr == "true") val = interpreter->makeValue(true);
+					else if (valStr == "false") val = interpreter->makeValue(false);
+					else if (valStr.size() >= 2 && valStr.front() == '"') val = interpreter->makeValue(
+						valStr.substr(1, valStr.size() - 2));
+					else val = interpreter->makeValue((Float)parseNumericLiteral(valStr));
 						args.push_back({"", val});
 					}
 				}

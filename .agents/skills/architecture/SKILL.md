@@ -29,6 +29,28 @@ When working with the codebase, always adhere strictly to the following rules.
 - Every `Value` constructor initialises `typeDescriptor` inline: `explicit Value(Int a) { typeDescriptor = TypeDescriptor{Type::Int, true, false, true, false}; ... }` — fields are `{type, isInit, isNullable, isConst, isDynamic}`.
 - **Default constructor** `Value()` creates a Null value with `isInit=true, isNullable=true`.
 
+### Value Allocation — `ValuePool` (important)
+
+**DO NOT** call `std::make_shared<Value>(...)` directly inside Library code. Use the per-interpreter pool instead:
+
+```cpp
+// Inside any IkigaiScriptInterpreter member function or [this]-capturing lambda:
+auto v = makeValue();           // null Value
+auto v = makeValue(Int(42));    // typed Value
+auto v = copyValue(*other);     // copy-construct from existing Value
+```
+
+`ValuePool` (`Library/value_pool.hpp`) is a slab-based freelist pool. Freed Value+control-block slots return to the freelist and are reused on the next `makeValue`, avoiding repeated system allocator calls.
+
+**Lifetime rule:** `valuePool` is declared as the **first member** of `IkigaiScriptInterpreter` so it is destroyed **last** — after all `ValuePtr`-holding members (`modules`, `globalScope`, `vm` stack, etc.) have released their references.
+
+**Acceptable exceptions** (may still use `std::make_shared<Value>`):
+- Static sentinel variables (`static ValuePtr superVal = std::make_shared<Value>("super")`)
+- `value.hpp` factory internals (no interpreter context)
+- `value.cpp` conversion helpers
+- `bytecode/serializer.cpp`, `concurrency/native_job_pool.cpp`, `native/*.hpp` (cold paths / no interpreter context)
+- Null-host fallbacks in `Scope` / `Class` copy constructors
+
 ---
 
 ## 3. Type System (`TypeDescriptor`)

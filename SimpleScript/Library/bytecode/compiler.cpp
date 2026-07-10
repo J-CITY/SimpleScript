@@ -172,7 +172,7 @@ namespace IkigaiScript {
 			current_->emit(OpCode::OP_PUSH_NULL, ln);
 		}
 		// Store TypeDescriptor as a constant so the VM can apply type enforcement.
-		auto tdVal = std::make_shared<Value>();
+		auto tdVal = interpreter_->makeValue();
 		tdVal->typeDescriptor = n.typeDescriptor;
 		uint16_t tdIdx = addConst(tdVal);
 		(void)tdIdx; // VM reads at name_idx+1 convention; we fold TD into name for now
@@ -361,7 +361,7 @@ namespace IkigaiScript {
 
 		// Push iterate variable names as constants so the VM knows what to bind.
 		for (auto& name : n.iterateNames) {
-			auto sv = std::make_shared<Value>(name);
+			auto sv = interpreter_->makeValue(name);
 			uint16_t idx = addConst(sv);
 			current_->emitU16(OpCode::OP_PUSH_CONST, idx, ln);
 		}
@@ -371,7 +371,7 @@ namespace IkigaiScript {
 		// Compile body as a nested BytecodeFunctionRef stored as a constant.
 		BytecodeCompiler bodyCompiler(interpreter_);
 		auto bodyFn = bodyCompiler.compileStatements(n.subexpressions, "__foreach_body__");
-		auto bodyFnVal = std::make_shared<Value>(std::make_shared<Function>("__foreach_body__"));
+		auto bodyFnVal = interpreter_->makeValue(std::make_shared<Function>("__foreach_body__"));
 		bodyFnVal->getFunction()->body = bodyFn;
 		uint16_t bodyIdx = addConst(bodyFnVal);
 		current_->emitU16(OpCode::OP_PUSH_CONST, bodyIdx, ln);
@@ -438,7 +438,7 @@ namespace IkigaiScript {
 		for (size_t i = 0; i < n.patternNames.size(); ++i) {
 			if (n.patternNames[i] == "_") continue;
 			current_->emit(OpCode::OP_DUP, ln);
-			auto idxVal = std::make_shared<Value>(static_cast<Int>(i));
+			auto idxVal = interpreter_->makeValue(static_cast<Int>(i));
 			uint16_t idxConst = addConst(idxVal);
 			current_->emitU16(OpCode::OP_PUSH_CONST, idxConst, ln);
 			current_->emit(OpCode::OP_GET_INDEX, ln);
@@ -465,7 +465,7 @@ namespace IkigaiScript {
 		// Compile defer body as a nested function stored in the constant pool.
 		BytecodeCompiler bodyCompiler(interpreter_);
 		auto bodyFn = bodyCompiler.compileStatements(n.subexpressions, "__defer_body__");
-		auto bodyFnVal = std::make_shared<Value>(std::make_shared<Function>("__defer_body__"));
+		auto bodyFnVal = interpreter_->makeValue(std::make_shared<Function>("__defer_body__"));
 		bodyFnVal->getFunction()->body = bodyFn;
 		uint16_t idx = addConst(bodyFnVal);
 		current_->emitU16(OpCode::OP_DEFER_REGISTER, idx, ln);
@@ -481,7 +481,7 @@ namespace IkigaiScript {
 		current_->emitU16(OpCode::OP_CALL_BUILTIN, addName("__live_rebind__"), ln);
 		current_->emitByte(2, ln); // [value, name]
 		// Push name before the call.
-		auto nameVal = std::make_shared<Value>(n.targetName);
+		auto nameVal = interpreter_->makeValue(n.targetName);
 		uint16_t nameConstIdx = addConst(nameVal);
 		(void)nameConstIdx; // ordering handled by VM; simplified here
 		current_->emitU16(OpCode::OP_PUSH_CONST, nameConstIdx, ln);
@@ -504,7 +504,7 @@ namespace IkigaiScript {
 			// Block form — compile body as a nested function.
 			BytecodeCompiler bodyCompiler(interpreter_);
 			auto bodyFn = bodyCompiler.compileStatements(n.subexpressions, "__spawn_body__");
-			auto bodyFnVal = std::make_shared<Value>(std::make_shared<Function>("__spawn_body__"));
+			auto bodyFnVal = interpreter_->makeValue(std::make_shared<Function>("__spawn_body__"));
 			bodyFnVal->getFunction()->body = bodyFn;
 			uint16_t idx = addConst(bodyFnVal);
 			current_->emitU16(OpCode::OP_PUSH_CONST, idx, ln);
@@ -537,7 +537,7 @@ namespace IkigaiScript {
 		int ln = resolveLine(&n);
 		BytecodeCompiler bodyCompiler(interpreter_);
 		auto bodyFn = bodyCompiler.compileStatements(n.subexpressions, "__branch_body__");
-		auto bodyFnVal = std::make_shared<Value>(std::make_shared<Function>("__branch_body__"));
+		auto bodyFnVal = interpreter_->makeValue(std::make_shared<Function>("__branch_body__"));
 		bodyFnVal->getFunction()->body = bodyFn;
 		uint16_t idx = addConst(bodyFnVal);
 		current_->emitU16(OpCode::OP_PUSH_CONST, idx, ln);

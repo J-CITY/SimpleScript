@@ -16,7 +16,7 @@ namespace IkigaiScript {
 	// ---------------------------------------------------------------------------
 
 	ValuePtr VM::runChunk(ChunkRef chunk, ScopePtr scope) {
-		if (!chunk || !chunk->main) return std::make_shared<Value>();
+		if (!chunk || !chunk->main) return interp_->makeValue();
 		return runFunction(chunk->main, scope, {});
 	}
 
@@ -32,19 +32,19 @@ namespace IkigaiScript {
 		}
 		// Pad remaining locals with null
 		for (size_t i = args.size(); i < fn->localCount; ++i) {
-			stack_.push_back(std::make_shared<Value>());
+			stack_.push_back(interp_->makeValue());
 		}
 
 		size_t stopDepth = frames_.size();  // stop when this frame is popped
 		frames_.push_back({fn, 0, stack_.size() - fn->localCount, frameScope, classs});
 		ValuePtr result = execute(stopDepth);
 		interp_->closeScope(frameScope);
-		return result ? result : std::make_shared<Value>();
+		return result ? result : interp_->makeValue();
 	}
 
 	ValuePtr VM::resumeCoro(TaskRef task) {
 		if (!task || task->state == TaskState::Completed || task->state == TaskState::Cancelled)
-			return task ? task->result : std::make_shared<Value>();
+			return task ? task->result : interp_->makeValue();
 
 		if (task->func->getBodyType() != FunctionBodyType::Bytecode) {
 			// Fallback: AST coro handled by interpreter
@@ -55,7 +55,7 @@ namespace IkigaiScript {
 		size_t savedStackBase = stack_.size();
 		// Restore local slots from task scope variables (simplified: push nulls)
 		for (size_t i = 0; i < byteFn->localCount; ++i) {
-			stack_.push_back(std::make_shared<Value>());
+			stack_.push_back(interp_->makeValue());
 		}
 
 		size_t stopDepth = frames_.size();
@@ -90,11 +90,11 @@ namespace IkigaiScript {
 	// ---------------------------------------------------------------------------
 
 	void VM::push(ValuePtr v) {
-		stack_.push_back(v ? v : std::make_shared<Value>());
+		stack_.push_back(v ? v : interp_->makeValue());
 	}
 
 	ValuePtr VM::pop() {
-		if (stack_.empty()) return std::make_shared<Value>();
+		if (stack_.empty()) return interp_->makeValue();
 		auto v = std::move(stack_.back());
 		stack_.pop_back();
 		return v;
@@ -167,7 +167,7 @@ namespace IkigaiScript {
 	// ---------------------------------------------------------------------------
 
 	ValuePtr VM::execute(size_t stopDepth) {
-		if (frames_.empty()) return std::make_shared<Value>();
+		if (frames_.empty()) return interp_->makeValue();
 
 		while (frames_.size() > stopDepth) {
 			CallFrame& frame = frames_.back();
@@ -178,8 +178,8 @@ namespace IkigaiScript {
 			if (frame.ip >= code.size()) {
 				while (stack_.size() > frame.stackBase) stack_.pop_back();
 				frames_.pop_back();
-				if (frames_.size() <= stopDepth) return std::make_shared<Value>();
-				push(std::make_shared<Value>());  // null return propagated to caller
+				if (frames_.size() <= stopDepth) return interp_->makeValue();
+				push(interp_->makeValue());  // null return propagated to caller
 				break;
 			}
 
@@ -187,11 +187,11 @@ namespace IkigaiScript {
 			switch (op) {
 
 				// ---------------------------------------------------------------
-				case OpCode::OP_PUSH_NULL:
-				{
-					push(std::make_shared<Value>());
-					break;
-				}
+			case OpCode::OP_PUSH_NULL:
+			{
+				push(interp_->makeValue());
+				break;
+			}
 				case OpCode::OP_PUSH_CONST:
 				{
 					uint16_t idx = readU16(frame);
@@ -210,7 +210,7 @@ namespace IkigaiScript {
 				{
 					uint16_t slot = readU16(frame);
 					size_t absIdx = frame.stackBase + slot;
-					push(absIdx < stack_.size() ? stack_[absIdx] : std::make_shared<Value>());
+					push(absIdx < stack_.size() ? stack_[absIdx] : interp_->makeValue());
 					break;
 				}
 				case OpCode::OP_SET_LOCAL:
@@ -240,22 +240,22 @@ namespace IkigaiScript {
 					interp_->dependencyManager.onVariableChanged(VarSlot{var.get()});
 					break;
 				}
-				case OpCode::OP_DEFINE_VAR:
-				{
-					uint16_t nameIdx = readU16(frame);
-					const auto& name = fn.names[nameIdx];
-					auto val = std::make_shared<Value>(*pop());
-					defineVar(name, val, false, scope);
-					break;
-				}
-				case OpCode::OP_DEFINE_CONST:
-				{
-					uint16_t nameIdx = readU16(frame);
-					const auto& name = fn.names[nameIdx];
-					auto val = std::make_shared<Value>(*pop());
-					defineVar(name, val, true, scope);
-					break;
-				}
+			case OpCode::OP_DEFINE_VAR:
+			{
+				uint16_t nameIdx = readU16(frame);
+				const auto& name = fn.names[nameIdx];
+				auto val = interp_->copyValue(*pop());
+				defineVar(name, val, false, scope);
+				break;
+			}
+			case OpCode::OP_DEFINE_CONST:
+			{
+				uint16_t nameIdx = readU16(frame);
+				const auto& name = fn.names[nameIdx];
+				auto val = interp_->copyValue(*pop());
+				defineVar(name, val, true, scope);
+				break;
+			}
 
 				// ---------------------------------------------------------------
 				case OpCode::OP_GET_MEMBER:
@@ -341,14 +341,14 @@ namespace IkigaiScript {
 					push(ret);
 					break;
 				}
-				case OpCode::OP_RETURN_NIL:
-				{
-					while (stack_.size() > frame.stackBase) stack_.pop_back();
-					frames_.pop_back();
-					if (frames_.size() <= stopDepth) return std::make_shared<Value>();
-					push(std::make_shared<Value>());
-					break;
-				}
+			case OpCode::OP_RETURN_NIL:
+			{
+				while (stack_.size() > frame.stackBase) stack_.pop_back();
+				frames_.pop_back();
+				if (frames_.size() <= stopDepth) return interp_->makeValue();
+				push(interp_->makeValue());
+				break;
+			}
 
 				// ---------------------------------------------------------------
 				case OpCode::OP_ADD:
@@ -404,13 +404,13 @@ namespace IkigaiScript {
 					if (fnc) {
 						push(interp_->callFunction(fnc, scope, args)); break;
 					}
-					// Fallback: inline negation
-					if (a->getType() == Type::Int) {
-						push(std::make_shared<Value>(-a->getInt())); break;
-					}
-					if (a->getType() == Type::Float) {
-						push(std::make_shared<Value>(-a->getFloat())); break;
-					}
+				// Fallback: inline negation
+				if (a->getType() == Type::Int) {
+					push(interp_->makeValue(-a->getInt())); break;
+				}
+				if (a->getType() == Type::Float) {
+					push(interp_->makeValue(-a->getFloat())); break;
+				}
 					throw Exception("VM: unary '-' on non-numeric");
 				}
 
@@ -432,12 +432,12 @@ namespace IkigaiScript {
 				}
 
 				// ---------------------------------------------------------------
-				case OpCode::OP_NOT:
-				{
-					auto a = pop();
-					push(std::make_shared<Value>(!isTruthy(a)));
-					break;
-				}
+			case OpCode::OP_NOT:
+			{
+				auto a = pop();
+				push(interp_->makeValue(!isTruthy(a)));
+				break;
+			}
 				case OpCode::OP_AND_SHORT:
 				{
 					int16_t offset = readI16(frame);
@@ -484,23 +484,22 @@ namespace IkigaiScript {
 				}
 
 				// ---------------------------------------------------------------
-				case OpCode::OP_MAKE_LIST:
-				{
-					uint16_t count = readU16(frame);
-					List items(count);
-					for (int i = count - 1; i >= 0; --i) items[i] = pop();
-					auto lst = std::make_shared<Value>(items);
-					push(lst);
-					break;
-				}
-				case OpCode::OP_MAKE_TUPLE:
-				{
-					uint16_t count = readU16(frame);
-					List items(count);
-					for (int i = count - 1; i >= 0; --i) items[i] = pop();
-					push(std::make_shared<Value>(Value::makeTuple(items)));
-					break;
-				}
+			case OpCode::OP_MAKE_LIST:
+			{
+				uint16_t count = readU16(frame);
+				List items(count);
+				for (int i = count - 1; i >= 0; --i) items[i] = pop();
+				push(interp_->makeValue(std::move(items)));
+				break;
+			}
+			case OpCode::OP_MAKE_TUPLE:
+			{
+				uint16_t count = readU16(frame);
+				List items(count);
+				for (int i = count - 1; i >= 0; --i) items[i] = pop();
+				push(interp_->makeValue(Value::makeTuple(std::move(items))));
+				break;
+			}
 				case OpCode::OP_GET_INDEX:
 				{
 					auto idx = pop();
@@ -556,15 +555,15 @@ namespace IkigaiScript {
 						break;
 					}
 					auto task = taskVal->getTask();
-					if (task->state == TaskState::Completed) {
-						push(task->result ? task->result : std::make_shared<Value>());
-						break;
-					}
-					// Drive to completion via interpreter's callCoro
-					while (task->state != TaskState::Completed && task->state != TaskState::Cancelled) {
-						interp_->callCoro(task);
-					}
-					push(task->result ? task->result : std::make_shared<Value>());
+				if (task->state == TaskState::Completed) {
+					push(task->result ? task->result : interp_->makeValue());
+					break;
+				}
+				// Drive to completion via interpreter's callCoro
+				while (task->state != TaskState::Completed && task->state != TaskState::Cancelled) {
+					interp_->callCoro(task);
+				}
+				push(task->result ? task->result : interp_->makeValue());
 					break;
 				}
 				case OpCode::OP_SPAWN:
@@ -577,14 +576,14 @@ namespace IkigaiScript {
 						auto taskResult = interp_->callFunction(callee->getFunction(), scope, args);
 						push(taskResult);
 					}
-					else {
-						push(std::make_shared<Value>());
-					}
-					break;
+				else {
+					push(interp_->makeValue());
 				}
+				break;
+			}
 
-				// ---------------------------------------------------------------
-				case OpCode::OP_ENTER_TX:
+			// ---------------------------------------------------------------
+			case OpCode::OP_ENTER_TX:
 				{
 					// Open a transaction scope (COW overlay).
 					auto txScope = interp_->newScope("__tx__", scope);
@@ -604,12 +603,12 @@ namespace IkigaiScript {
 					auto parentScope = scope->parent;
 					interp_->closeScope(scope, false);
 					if (parentScope) frame.scope = parentScope;
-					if (producesValue) {
-						push(result ? result : std::make_shared<Value>());
-					}
-					else {
-						push(std::make_shared<Value>(true));
-					}
+				if (producesValue) {
+					push(result ? result : interp_->makeValue());
+				}
+				else {
+					push(interp_->makeValue(true));
+				}
 					break;
 				}
 
@@ -640,7 +639,7 @@ namespace IkigaiScript {
 			}
 		}
 
-		return std::make_shared<Value>();
+		return interp_->makeValue();
 	}
 
 } // namespace IkigaiScript

@@ -1,5 +1,6 @@
 #include "scope.hpp"
 
+#include "ikigaiScript.h"
 #include "value.hpp"
 
 namespace IkigaiScript {
@@ -25,7 +26,7 @@ namespace IkigaiScript {
 	Scope::Scope(const Scope& o): name(o.name), parent(o.parent), scopes(o.scopes), functions(o.functions), host(o.host) {
 		// copy vars by value when cloning a scope
 		for (auto&& v : o.variables) {
-			variables[v.first] = std::make_shared<Value>(*v.second);
+			variables[v.first] = host ? host->copyValue(*v.second) : std::make_shared<Value>(*v.second);
 		}
 	}
 	Scope::Scope(const std::string& name_, const std::unordered_map<std::string, ValuePtr>& variables_): name(name_), variables(variables_) {
