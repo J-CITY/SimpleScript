@@ -64,5 +64,8 @@ namespace IkigaiScript {
 		std::vector<ExpressionPtr> pendingTopLevelStatements;
 		
 		std::vector<Metadata> pendingMetadata;
+
+		// Blueprint node ID from @bp(node=N) decorator — applied to the next statement.
+		int pendingBpNodeId = 0;
 	};
 }

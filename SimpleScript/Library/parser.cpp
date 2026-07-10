@@ -1120,17 +1120,19 @@ namespace IkigaiScript {
 				else if (token == "dynamic") {
 					parseState = ParseState::DefineDynamic;
 				}
-				else if (token == "for" || token == "while") {
-					parseState = ParseState::LoopCall;
-					if (currentExpression) {
-						auto newexpr = interpreter->arena.make<Loop>(currentExpression);
-						currentExpression->push_back(newexpr);
-						currentExpression = newexpr;
-					}
-					else {
-						currentExpression = interpreter->arena.make<Loop>();
-					}
+			else if (token == "for" || token == "while") {
+				parseState = ParseState::LoopCall;
+				if (currentExpression) {
+					auto newexpr = interpreter->arena.make<Loop>(currentExpression);
+					if (pendingBpNodeId) { newexpr->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+					currentExpression->push_back(newexpr);
+					currentExpression = newexpr;
 				}
+				else {
+					currentExpression = interpreter->arena.make<Loop>();
+					if (pendingBpNodeId) { currentExpression->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+				}
+			}
 				else if (token == "foreach") {
 					parseState = ParseState::ForEach;
 					if (currentExpression) {
@@ -1142,19 +1144,21 @@ namespace IkigaiScript {
 						currentExpression = interpreter->arena.make<Foreach>();
 					}
 				}
-				else if (token == "if") {
-					clearParseStacks();
-					parseState = ParseState::IfCall;
-					if (currentExpression) {
-						auto dummy = std::vector<If>{};
-						auto newexpr = interpreter->arena.make<IfElse>(dummy, currentExpression);
-						currentExpression->push_back(newexpr);
-						currentExpression = newexpr;
-					}
-					else {
-						currentExpression = interpreter->arena.make<IfElse>();
-					}
+			else if (token == "if") {
+				clearParseStacks();
+				parseState = ParseState::IfCall;
+				if (currentExpression) {
+					auto dummy = std::vector<If>{};
+					auto newexpr = interpreter->arena.make<IfElse>(dummy, currentExpression);
+					if (pendingBpNodeId) { newexpr->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+					currentExpression->push_back(newexpr);
+					currentExpression = newexpr;
 				}
+				else {
+					currentExpression = interpreter->arena.make<IfElse>();
+					if (pendingBpNodeId) { currentExpression->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+				}
+			}
 				else if (token == "else") {
 					parseState = ParseState::ExpectIfEnd;
 					currentExpression = previousExpression;
@@ -1697,14 +1701,15 @@ namespace IkigaiScript {
 				parseStrings.push_back(token);
 			}
 			break;
-			case ParseState::ReturnLine:
-			if (token == ";") {
-				if (currentExpression) {
-					currentExpression->push_back(
-						interpreter->arena.make<Return>(getExpression(move(parseStrings), parseScope, nullptr)));
-				}
-				clearParseStacks();
+		case ParseState::ReturnLine:
+		if (token == ";") {
+			if (currentExpression) {
+				auto retNode = interpreter->arena.make<Return>(getExpression(move(parseStrings), parseScope, nullptr));
+				if (pendingBpNodeId) { retNode->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+				currentExpression->push_back(retNode);
 			}
+			clearParseStacks();
+		}
 			else {
 				parseStrings.push_back(token);
 			}
@@ -1909,40 +1914,48 @@ namespace IkigaiScript {
 				parse(token);
 			}
 			break;
-			case ParseState::DecoratorArgsList:
-			if (token == ")") {
-				auto& args = pendingMetadata.back().arguments;
-				for (size_t i = 0; i < parseStrings.size(); ++i) {
-					if (i + 2 < parseStrings.size() && parseStrings[i + 1] == "=") {
-						std::string key = std::string(parseStrings[i]);
-						std::string valStr = std::string(parseStrings[i + 2]);
-					ValuePtr val = nullptr;
-					if (valStr == "true") val = interpreter->makeValue(true);
-					else if (valStr == "false") val = interpreter->makeValue(false);
-					else if (valStr.size() >= 2 && valStr.front() == '"') val = interpreter->makeValue(
-						valStr.substr(1, valStr.size() - 2));
-					else val = interpreter->makeValue((Float)parseNumericLiteral(valStr));
-					args.push_back({key, val});
-					i += 2;
+		case ParseState::DecoratorArgsList:
+		if (token == ")") {
+			auto& args = pendingMetadata.back().arguments;
+			for (size_t i = 0; i < parseStrings.size(); ++i) {
+				if (i + 2 < parseStrings.size() && parseStrings[i + 1] == "=") {
+					std::string key = std::string(parseStrings[i]);
+					std::string valStr = std::string(parseStrings[i + 2]);
+				ValuePtr val = nullptr;
+				if (valStr == "true") val = interpreter->makeValue(true);
+				else if (valStr == "false") val = interpreter->makeValue(false);
+				else if (valStr.size() >= 2 && valStr.front() == '"') val = interpreter->makeValue(
+					valStr.substr(1, valStr.size() - 2));
+				else val = interpreter->makeValue((Float)parseNumericLiteral(valStr));
+				args.push_back({key, val});
+				i += 2;
+			}
+			else if (parseStrings[i] != ",") {
+				std::string valStr = std::string(parseStrings[i]);
+				ValuePtr val = nullptr;
+				if (valStr == "true") val = interpreter->makeValue(true);
+				else if (valStr == "false") val = interpreter->makeValue(false);
+				else if (valStr.size() >= 2 && valStr.front() == '"') val = interpreter->makeValue(
+					valStr.substr(1, valStr.size() - 2));
+				else val = interpreter->makeValue((Float)parseNumericLiteral(valStr));
+					args.push_back({"", val});
 				}
-				else if (parseStrings[i] != ",") {
-					std::string valStr = std::string(parseStrings[i]);
-					ValuePtr val = nullptr;
-					if (valStr == "true") val = interpreter->makeValue(true);
-					else if (valStr == "false") val = interpreter->makeValue(false);
-					else if (valStr.size() >= 2 && valStr.front() == '"') val = interpreter->makeValue(
-						valStr.substr(1, valStr.size() - 2));
-					else val = interpreter->makeValue((Float)parseNumericLiteral(valStr));
-						args.push_back({"", val});
+			}
+			// If this is a @bp(node=N) decorator, capture the node ID for the next statement.
+			if (!pendingMetadata.empty() && pendingMetadata.back().name == "bp") {
+				for (auto& arg : pendingMetadata.back().arguments) {
+					if (arg.first == "node" && arg.second && arg.second->getType() == Type::Float) {
+						pendingBpNodeId = (int)arg.second->value.asFloat;
 					}
 				}
-				parseStrings.clear();
-				parseState = ParseState::BeginExpression;
 			}
-			else {
-				parseStrings.push_back(token);
-			}
-			break;
+			parseStrings.clear();
+			parseState = ParseState::BeginExpression;
+		}
+		else {
+			parseStrings.push_back(token);
+		}
+		break;
 			case ParseState::DefineVar:
 			case ParseState::DefineConst:
 			case ParseState::DefineDynamic:
@@ -2054,20 +2067,22 @@ namespace IkigaiScript {
 				if (nextStatementIsExported) {
 					interpreter->registerExport(parseScope, std::string(name));
 				}
-				if (currentExpression) {
-					auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
-					node->isLive = pendingLive;
-					currentExpression->push_back(node);
-				}
-				else {
-					auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
-					node->isLive = pendingLive;
-					evalOrCollect(node);
-				}
-				if (pendingMetadata.size()) {
-					parseScope->membersMetadata[std::string(name)] = pendingMetadata;
-					pendingMetadata.clear();
-				}
+			if (currentExpression) {
+				auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
+				node->isLive = pendingLive;
+				if (pendingBpNodeId) { node->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+				currentExpression->push_back(node);
+			}
+			else {
+				auto node = interpreter->arena.make<DefineVar>(std::string(name), defineExpr, tDescriptor);
+				node->isLive = pendingLive;
+				if (pendingBpNodeId) { node->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+				evalOrCollect(node);
+			}
+			if (pendingMetadata.size()) {
+				parseScope->membersMetadata[std::string(name)] = pendingMetadata;
+				pendingMetadata.clear();
+			}
 				clearParseStacks();
 			}
 			else {
@@ -2450,15 +2465,17 @@ namespace IkigaiScript {
 					}
 					newfunc->isCoro = true;
 				}
-				if (currentExpression) {
-					auto newexpr = interpreter->arena.make<FunctionExpression>(newfunc, currentExpression);
-					currentExpression->push_back(newexpr);
-					currentExpression = newexpr;
-				}
-				else {
-					currentExpression = interpreter->arena.make<FunctionExpression>(newfunc, nullptr);
-				}
-				if (varArgsValue) {
+			if (currentExpression) {
+				auto newexpr = interpreter->arena.make<FunctionExpression>(newfunc, currentExpression);
+				if (pendingBpNodeId) { newexpr->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+				currentExpression->push_back(newexpr);
+				currentExpression = newexpr;
+			}
+			else {
+				currentExpression = interpreter->arena.make<FunctionExpression>(newfunc, nullptr);
+				if (pendingBpNodeId) { currentExpression->bpNodeId = pendingBpNodeId; pendingBpNodeId = 0; }
+			}
+			if (varArgsValue) {
 					auto funcExpr = static_cast<FunctionExpression*>(currentExpression);
 					funcExpr->function->getFunction()->variableArgsParam = varArgsValue;
 					if (isTyped) {

@@ -131,6 +131,10 @@ namespace IkigaiScript {
 		writeU32(buf, static_cast<uint32_t>(bfn.lines.size()));
 		for (auto ln : bfn.lines) writeI32(buf, ln);
 
+		// bpNodeIds (parallel to lines)
+		writeU32(buf, static_cast<uint32_t>(bfn.bpNodeIds.size()));
+		for (auto id : bfn.bpNodeIds) writeI32(buf, id);
+
 		// name pool
 		writeU32(buf, static_cast<uint32_t>(bfn.names.size()));
 		for (auto& n : bfn.names) writeString(buf, n);
@@ -297,6 +301,13 @@ namespace IkigaiScript {
 		uint32_t linesLen = readU32(data, pos);
 		bfn->lines.reserve(linesLen);
 		for (uint32_t i = 0; i < linesLen; ++i) bfn->lines.push_back(readI32(data, pos));
+
+		// bpNodeIds (may be absent in older files — treat as all-zero)
+		uint32_t bpLen = readU32(data, pos);
+		bfn->bpNodeIds.reserve(bpLen);
+		for (uint32_t i = 0; i < bpLen; ++i) bfn->bpNodeIds.push_back(readI32(data, pos));
+		// Pad to code.size() if serialized with fewer entries
+		while (bfn->bpNodeIds.size() < bfn->code.size()) bfn->bpNodeIds.push_back(0);
 
 		// name pool
 		uint32_t namesCount = readU32(data, pos);

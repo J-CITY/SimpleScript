@@ -845,3 +845,82 @@ All integers are little-endian. `std::string` is used as the buffer type (binary
 
 `Tests/BytecodeTests.cpp` — 23 dual-run tests + 6 compile I/O tests. `expectSameOutput(code)` runs the same script in both Interpreter and Bytecode modes and asserts identical `__DEBUG_OUT__`. The compile I/O tests are tagged `[bytecode][compile_io]`.
 
+---
+
+## 26. VisualEditor / Blueprint System
+
+The VisualEditor is a node-based visual programming system that generates `.ss` scripts and can execute them via `IkigaiScriptInterpreter`.
+
+### Layer separation
+
+```
+SimpleScript/VisualEditor/
+  Core/            ← no ImGui; built into IkigaiVisualCore library
+    GraphTypes.hpp      Id, Vec2, ColorRGBA
+    PinTypes.hpp        PinType, NodeType, OperatorType enums; Visual::Value
+    GraphModel.hpp/cpp  Node, Pin, Link hierarchy (accept(Visitor&))
+    GraphContext.hpp/cpp Graph singleton — nodes/pins/links maps, scope for codegen
+    NodeRegistry.hpp/cpp Palette entries + BlueprintCapability flags
+  Mapping/
+    BpSourceMap.hpp/cpp  nodeId ↔ line range entries + @bp-map header comment
+  Visitors/
+    Visitor.hpp          Pure virtual Visitor interface (double-dispatch)
+    CodeGenerator.hpp/cpp Emits .ss code with @bp(node=N) decorators + BpSourceMap
+    GraphSaver.hpp/cpp   JSON serialization (reads layoutPosition from model)
+    GraphLoader.hpp/cpp  JSON deserialization (writes layoutPosition to model)
+    GraphValidator.hpp/cpp Pre-compile checks (StartNode, type compat, capability)
+  UI/              ← requires IKIGAI_VISUAL_EDITOR_UI define; linked into SimpleScriptApp
+    ImGuiTypes.hpp       toEditorNodeId(Id), toImVec2(Vec2) etc.
+    NodeEditorSession    Owns ax::NodeEditor::EditorContext; applyLayout/syncLayout
+    NodeDrawer.hpp/cpp   ImGui-based Visitor for node inner content
+    VisualCodeEditor.hpp/cpp Main UI class
+```
+
+### CMake targets
+
+| Target | Contents | Links to |
+|---|---|---|
+| `IkigaiVisualCore` | `Core/`, `Mapping/`, `Visitors/` | `IkigaiScriptCore` |
+| `SimpleScriptApp` | `UI/` + imgui + imgui-node-editor | `IkigaiVisualCore` |
+| `SimpleScriptTests` | `Tests/*.cpp` | `IkigaiScriptCore` + `IkigaiVisualCore` |
+
+### Node IDs: plain `Visual::Id` (int)
+
+All node, pin, and link IDs are plain `int`. The UI layer uses `UI::toEditorNodeId(id)` / `UI::fromEditorNodeId(edId)` for conversion. Layout positions (`node.layoutPosition: Vec2`) are stored in the model; `NodeEditorSession::syncLayout()` pulls positions from NodeEditor after each frame.
+
+### Source mapping: `@bp(node=N)` + `BpSourceMap`
+
+`CodeGenerator` emits `@bp(node=N)` decorator before each var/fun/class/if/for/while/return statement. The first line of generated script is a `// @bp-map {...}` JSON comment that encodes the full `BpSourceMap`. This lets host tools re-load the map without re-running codegen.
+
+The parser extracts `@bp(node=N)` args into `Parser::pendingBpNodeId` and applies them to created `Expression::bpNodeId`. `consolidated()` and the VM call `ExecutionObserver::onEnterNode(bpNodeId)` whenever a tagged statement executes.
+
+### ExecutionObserver
+
+```cpp
+// In ikigaiScript.h:
+struct ExecutionObserver {
+    virtual void onEnterNode(int bpNodeId) {}
+    virtual void onExitNode(int bpNodeId) {}
+};
+// On interpreter:
+void setExecutionObserver(ExecutionObserver* obs);
+```
+
+The UI implements this to highlight the currently-executing blueprint node. The bytecode VM also fires the observer via `bpNodeIds[]` parallel to `lines[]` in `BytecodeFunction`.
+
+### Supported / Unsupported language features
+
+`NodeRegistry::isSupported(NodeType)` is the authoritative gate. Unsupported types are hidden from the palette and rejected by `GraphValidator`.
+
+**Supported (Tier 1):** literals (Int/Float/Bool/String/List/Map), variables, assignment (=), arithmetic/logic operators, if/else, for, while, return/break/continue, function declaration+call, class declaration, method declaration+call, this, import, comment.
+
+**Unsupported (excluded from blueprints):** generics, coroutines/yield, defer, match, tuple destructuring, live rebind, concurrency (await/spawn/sync/race/branch), safe blocks (`>>>`), inline lambdas with capture, `@interpret`/`@bytecode` decorators, export/using/multi-file modules beyond `import`.
+
+### Key gotchas
+
+- `GraphContext` is a singleton. Always call `ctx.clear()` + `IdGenerator::SetStart(1)` in tests.
+- `GraphSaver` reads `node.layoutPosition` — the UI must call `session.syncLayout(ctx)` before save so positions are current.
+- `GraphLoader` writes `node.layoutPosition` — the UI must call `session.applyLayout(ctx)` after load to push positions into NodeEditor.
+- `CodeExecutor` has been deleted; the only runtime path is `IkigaiScriptInterpreter::evaluate(generatedScript)`.
+- Tests are in `Tests/BlueprintCodegenTests.cpp` (49 assertions, headless, no ImGui).
+

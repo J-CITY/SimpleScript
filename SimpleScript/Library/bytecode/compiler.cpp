@@ -66,7 +66,12 @@ namespace IkigaiScript {
 			current_->emit(OpCode::OP_PUSH_NULL, resolveLine(node));
 			return;
 		}
+		size_t startPos = current_->code.size();
 		node->accept(*this);
+		// Tag the first opcode emitted for this node with its blueprint node ID.
+		if (node->bpNodeId != 0 && startPos < current_->bpNodeIds.size()) {
+			current_->bpNodeIds[startPos] = node->bpNodeId;
+		}
 	}
 
 	void BytecodeCompiler::compileBlock(const std::vector<ExpressionPtr>& stmts) {
@@ -99,6 +104,11 @@ namespace IkigaiScript {
 	int BytecodeCompiler::resolveLine(ExpressionPtr node) const {
 		if (!node) return 0;
 		return node->line;
+	}
+
+	int BytecodeCompiler::resolveBpNodeId(ExpressionPtr node) const {
+		if (!node) return 0;
+		return node->bpNodeId;
 	}
 
 	uint16_t BytecodeCompiler::addConst(ValuePtr v) {

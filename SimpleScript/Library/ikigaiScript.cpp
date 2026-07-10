@@ -3111,6 +3111,9 @@ namespace IkigaiScript {
 			}
 			return arena.make<ValueNode>(makeValue(), ExpressionType::Value);
 		};
+		// Notify ExecutionObserver when a blueprint-tagged statement begins.
+		if (executionObserver && exp->bpNodeId != 0)
+			executionObserver->onEnterNode(exp->bpNodeId);
 		switch (exp->type) {
 			case ExpressionType::DefineVar:
 			{

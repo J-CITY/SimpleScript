@@ -183,6 +183,12 @@ namespace IkigaiScript {
 				break;
 			}
 
+			// Notify ExecutionObserver for blueprint-tagged instructions.
+			if (interp_->executionObserver && frame.ip < fn.bpNodeIds.size()) {
+				int bpId = fn.bpNodeIds[frame.ip];
+				if (bpId != 0) interp_->executionObserver->onEnterNode(bpId);
+			}
+
 			auto op = static_cast<OpCode>(readByte(frame));
 			switch (op) {
 

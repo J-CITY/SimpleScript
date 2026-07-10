@@ -26,6 +26,9 @@ namespace IkigaiScript {
 	struct Expression: public LineInfo {
 		ExpressionType type;
 		ExpressionPtr parent = nullptr;
+		// Blueprint node ID that generated this expression (0 = not from a blueprint).
+		// Set by the parser when a @bp(node=N) decorator precedes the statement.
+		int bpNodeId = 0;
 		Expression(ExpressionType ty, ExpressionPtr par = nullptr): type(ty), parent(par) {
 		}
 

@@ -57,6 +57,7 @@ namespace IkigaiScript {
 		void compileBlock(const std::vector<ExpressionPtr>& stmts);
 
 		int resolveLine(ExpressionPtr node) const;
+		int resolveBpNodeId(ExpressionPtr node) const;
 		uint16_t addConst(ValuePtr v);
 		uint16_t addName(const std::string& name);
 

@@ -42,6 +42,15 @@ namespace Native {
 		ValuePtr lastValue = nullptr;
 	};
 
+	// Observer interface for tracking script execution at the blueprint-node level.
+	// Implement this and call setExecutionObserver() to receive callbacks whenever
+	// a statement with a bpNodeId != 0 begins or ends executing.
+	struct ExecutionObserver {
+		virtual ~ExecutionObserver() = default;
+		virtual void onEnterNode(int bpNodeId) {}
+		virtual void onExitNode(int bpNodeId) {}
+	};
+
 	class IkigaiScriptInterpreter {
 	public:
 		// valuePool MUST be the first member so it is the last destroyed,
@@ -52,6 +61,9 @@ namespace Native {
 		std::atomic_bool data_is_ready_{};
 
 		inline static uint64_t currentLine = 0;
+
+		ExecutionObserver* executionObserver = nullptr;
+		void setExecutionObserver(ExecutionObserver* obs) { executionObserver = obs; }
 
 		ExecutionMode executionMode = ExecutionMode::Interpreter;
 		void setExecutionMode(ExecutionMode mode) {
