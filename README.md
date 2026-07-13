@@ -1,5 +1,7 @@
 # IkigaiScript (IkigaiScript)
 
+![IkigaiScript Logo](docs/logo.png)
+
 > **Русский:** [README.ru.md](README.ru.md)
 
 IkigaiScript is an embeddable C++20 scripting language with static typing, classes, coroutines, modules, and a dual execution architecture: an **AST interpreter** (default) and a **stack-based bytecode VM**.

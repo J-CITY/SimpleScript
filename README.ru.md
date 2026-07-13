@@ -1,5 +1,7 @@
 # IkigaiScript (IkigaiScript)
 
+![IkigaiScript Logo](docs/logo.png)
+
 > **English:** [README.md](README.md)
 
 IkigaiScript — встраиваемый скриптовый язык на C++20 с статической типизацией, классами, корутинами, модулями и двойной архитектурой исполнения: **интерпретатор AST** (по умолчанию) и **стековая VM с байткодом**.
