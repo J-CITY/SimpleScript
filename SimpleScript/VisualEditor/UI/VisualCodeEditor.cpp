@@ -16,15 +16,15 @@
 #include <set>
 #include <variant>
 
-#include "../../imgui/imgui.h"
-#include "../../imgui/imgui_internal.h"
-#include "../../imgui/misc/cpp/imgui_stdlib.h"
-#include "../../imgui/TextEditor.h"
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <imgui_stdlib.h>
+#include <TextEditor.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
-#include "../../stb_image.h"
-#include "../../imgui/imgui_impl_opengl3_loader.h"
+#include "stb_image.h"
+#include <GL/glew.h>
 
 using namespace Visual;
 using namespace Visual::UI;
@@ -147,7 +147,9 @@ static bool tryConvert(PinTypeDescriptor from, PinTypeDescriptor to) {
         }
         return true;
     }
-    if (to.type   == PinType::Any) return true;
+    // Untyped / wildcard pins accept any non-flow value
+    if (to.type   == PinType::Any  || to.type == PinType::None) return from.type != PinType::Flow;
+    if (from.type == PinType::Any) return to.type != PinType::Flow;
     if (to.type   == PinType::Flow|| from.type == PinType::Flow) return false;
     if (to.type   == PinType::Variable) {
         if (!to.subType) return true;
@@ -168,13 +170,37 @@ static bool checkTypes(const Pin& from, const Pin& to) {
 }
 
 static void setInputPinsType(Node* node, PinTypeDescriptor t) {
-    for (auto& p : node->inputs) p->type = t;
+    // Only specialize untyped data pins — never overwrite Flow.
+    for (auto& p : node->inputs) {
+        if (p->type.type == PinType::None)
+            p->type = t;
+    }
+    for (auto& p : node->outputs) {
+        if (p->type.type == PinType::None)
+            p->type = t;
+    }
 }
 
 static bool checkInputTypeForOperator(Node* node, PinTypeDescriptor t) {
     if (node->type != NodeType::Operator) return true;
+    if (t.type == PinType::Any) return true;
     return t.type == PinType::Bool || t.type == PinType::Int ||
            t.type == PinType::Float || t.type == PinType::String;
+}
+
+static PinTypeDescriptor pinTypeForValueNode(NodeType t) {
+    switch (t) {
+    case NodeType::ValueBool:   return {PinType::Bool};
+    case NodeType::ValueInt:    return {PinType::Int};
+    case NodeType::ValueFloat:  return {PinType::Float};
+    case NodeType::ValueString: return {PinType::String};
+    case NodeType::ValueList:   return {PinType::List};
+    case NodeType::ValueMap:    return {PinType::Map};
+    case NodeType::ValueArrayBool:  return {PinType::ArrayBool};
+    case NodeType::ValueArrayInt:   return {PinType::ArrayInt};
+    case NodeType::ValueArrayFloat: return {PinType::ArrayFloat};
+    default: return {PinType::Any};
+    }
 }
 
 static void updatePinsForThisNode(ThisNode& thisNode, VariableNode& varNode) {
@@ -418,26 +444,31 @@ void VisualCodeEditor::drawLinks() {
     if (ax::NodeEditor::BeginCreate()) {
         ax::NodeEditor::PinId fromPinIdE, toPinIdE;
         if (ax::NodeEditor::QueryNewLink(&fromPinIdE, &toPinIdE) && fromPinIdE && toPinIdE) {
-            if (ax::NodeEditor::AcceptNewItem()) {
-                Id fromId = fromEditorPinId(fromPinIdE);
-                Id toId   = fromEditorPinId(toPinIdE);
-                auto fromPin = ctx_.pins.count(fromId) ? ctx_.pins[fromId] : nullptr;
-                auto toPin   = ctx_.pins.count(toId)   ? ctx_.pins[toId]   : nullptr;
-                if (!fromPin || !toPin) { ax::NodeEditor::EndCreate(); return; }
+            Id fromId = fromEditorPinId(fromPinIdE);
+            Id toId   = fromEditorPinId(toPinIdE);
+            auto fromPin = ctx_.pins.count(fromId) ? ctx_.pins[fromId] : nullptr;
+            auto toPin   = ctx_.pins.count(toId)   ? ctx_.pins[toId]   : nullptr;
 
-                // Enforce output→input direction
-                if (fromPin->kind == toPin->kind) { ax::NodeEditor::EndCreate(); return; }
-                if (fromPin->kind == PinKind::Input) { std::swap(fromPin, toPin); std::swap(fromId, toId); }
+            bool ok = fromPin && toPin && fromPin->kind != toPin->kind;
+            if (ok && fromPin->kind == PinKind::Input) {
+                std::swap(fromPin, toPin);
+                std::swap(fromId, toId);
+            }
+            if (ok && fromPin->type.type == PinType::None) ok = false;
+            if (ok && !checkInputTypeForOperator(toPin->node, fromPin->type)) ok = false;
+            if (ok && !checkTypes(*fromPin, *toPin)) ok = false;
 
-                if (fromPin->type.type == PinType::None)    { ax::NodeEditor::EndCreate(); return; }
-                if (!checkInputTypeForOperator(toPin->node, fromPin->type)) { ax::NodeEditor::EndCreate(); return; }
-                if (toPin->type.type == PinType::None) setInputPinsType(toPin->node, fromPin->type);
-                if (!checkTypes(*fromPin, *toPin))          { ax::NodeEditor::EndCreate(); return; }
-
-                auto link = ctx_.createLink(IdGenerator::GenId(), fromId, toId);
-                ax::NodeEditor::Link(toEditorLinkId(link->id),
-                                     toEditorPinId(link->startPinID),
-                                     toEditorPinId(link->endPinID));
+            if (ok) {
+                if (ax::NodeEditor::AcceptNewItem()) {
+                    if (toPin->type.type == PinType::None)
+                        setInputPinsType(toPin->node, fromPin->type);
+                    auto link = ctx_.createLink(IdGenerator::GenId(), fromId, toId);
+                    ax::NodeEditor::Link(toEditorLinkId(link->id),
+                                         toEditorPinId(link->startPinID),
+                                         toEditorPinId(link->endPinID));
+                }
+            } else {
+                ax::NodeEditor::RejectNewItem(ImColor(255, 128, 128), 2.0f);
             }
         }
     }
@@ -549,7 +580,7 @@ void VisualCodeEditor::createValueNode(Value val) {
         }, val.value.value());
     }
     auto node = ctx_.createNode<ValueNode>(IdGenerator::GenId(), "Constant", t, val);
-    ctx_.createPin(IdGenerator::GenId(), "Value", {PinType::Any}, node.get(), PinKind::Output);
+    ctx_.createPin(IdGenerator::GenId(), "Value", pinTypeForValueNode(t), node.get(), PinKind::Output);
 }
 
 void VisualCodeEditor::createVariableNode(PinTypeDescriptor type) {

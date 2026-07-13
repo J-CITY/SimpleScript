@@ -4,8 +4,8 @@
 // and the imgui-node-editor / ImGui native types.
 // Only included in UI-layer translation units.
 
-#include "../../imgui/imgui.h"
-#include "../../imgui/imgui-node-editor/imgui_node_editor.h"
+#include <imgui.h>
+#include <imgui_node_editor.h>
 #include "../Core/GraphTypes.hpp"
 
 namespace Visual::UI {

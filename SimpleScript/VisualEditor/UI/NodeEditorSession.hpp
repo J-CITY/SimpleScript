@@ -1,7 +1,7 @@
 #pragma once
 #include <memory>
 #include "../Core/GraphContext.hpp"
-#include "../../imgui/imgui-node-editor/imgui_node_editor.h"
+#include <imgui_node_editor.h>
 
 namespace Visual {
 

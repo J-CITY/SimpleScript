@@ -3,9 +3,9 @@
 #include "../Core/GraphContext.hpp"
 #define NOMINMAX
 #define IMGUI_DEFINE_MATH_OPERATORS
-#include "../../imgui/imgui.h"
-#include "../../imgui/misc/cpp/imgui_stdlib.h"
-#include "../../imgui/imgui-node-editor/imgui_node_editor.h"
+#include <imgui.h>
+#include <imgui_stdlib.h>
+#include <imgui_node_editor.h>
 
 using namespace Visual;
 
@@ -197,8 +197,8 @@ void NodeDrawer::run(ImportNode& node) {
 }
 
 void NodeDrawer::run(CommentNode& node) {
-    const auto sz = ax::NodeEditor::GetGroupBoundsSize();
-    ImGui::PushItemWidth(sz.x);
+    const float width = node.size.x > 0.f ? node.size.x : 200.f;
+    ImGui::PushItemWidth(width);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::GetColorU32(ImVec4(0,0,0,0)));
     ImGui::InputText("##cmt", &node.value);
     ImGui::PopStyleColor();
