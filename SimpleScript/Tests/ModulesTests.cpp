@@ -25,7 +25,7 @@ public:
 };
 
 TEST_CASE("modules: qualified variable and function access", "[modules.qualified]") {
-	TempFile f("math_mod.ss",
+	TempFile f("math_mod.ik",
 		"module Math;\n"
 		"export fun add(a, b) { return a + b; }\n"
 		"export var PI = 3.14;\n"
@@ -46,7 +46,7 @@ TEST_CASE("modules: qualified variable and function access", "[modules.qualified
 }
 
 TEST_CASE("modules: selective import using using", "[modules.using.selective]") {
-	TempFile f("utils_mod.ss",
+	TempFile f("utils_mod.ik",
 		"module Utils;\n"
 		"export fun mult(a, b) { return a * b; }\n"
 		"export var greet = \"hello\";\n"
@@ -63,7 +63,7 @@ TEST_CASE("modules: selective import using using", "[modules.using.selective]") 
 }
 
 TEST_CASE("modules: selective import with alias", "[modules.using.alias]") {
-	TempFile f("alias_mod.ss",
+	TempFile f("alias_mod.ik",
 		"module Foo;\n"
 		"export fun bar() { return 42; }\n"
 	);
@@ -78,7 +78,7 @@ TEST_CASE("modules: selective import with alias", "[modules.using.alias]") {
 }
 
 TEST_CASE("modules: single using alias", "[modules.using.single_alias]") {
-	TempFile f("single_mod.ss",
+	TempFile f("single_mod.ik",
 		"module Bar;\n"
 		"export var val = 100;\n"
 	);
@@ -93,8 +93,8 @@ TEST_CASE("modules: single using alias", "[modules.using.single_alias]") {
 }
 
 TEST_CASE("modules: circular import check", "[modules.circular]") {
-	auto pathA = (fs::temp_directory_path() / "circA.ss").generic_string();
-	auto pathB = (fs::temp_directory_path() / "circB.ss").generic_string();
+	auto pathA = (fs::temp_directory_path() / "circA.ik").generic_string();
+	auto pathB = (fs::temp_directory_path() / "circB.ik").generic_string();
 
 	std::ofstream outA(pathA);
 	outA << "import \"" << pathB << "\";\nmodule CircA;\nexport var a = 1;\n";
@@ -113,7 +113,7 @@ TEST_CASE("modules: circular import check", "[modules.circular]") {
 }
 
 TEST_CASE("modules: caching check", "[modules.caching]") {
-	TempFile f("count_mod.ss",
+	TempFile f("count_mod.ik",
 		"module Count;\n"
 		"export var value = 0;\n"
 		"value = value + 1;\n"

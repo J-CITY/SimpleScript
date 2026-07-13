@@ -87,7 +87,7 @@ TEST_CASE("result: copy & assign semantics", "[result.copy]") {
 	);
 	REQUIRE(run(interp, "print(resultGet(b));") == "100");
 
-	// В SimpleScript переменные в скоупе разделяют один и тот же объект Value при присваивании (ссылочная семантика).
+	// В IkigaiScript переменные в скоупе разделяют один и тот же объект Value при присваивании (ссылочная семантика).
 	// Поэтому изменение 'a' через '=' обновит и значение 'b'.
 	interp.evaluate("a = resultOk(200);");
 	REQUIRE(run(interp, "print(resultGet(a));") == "200");

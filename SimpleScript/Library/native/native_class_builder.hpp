@@ -1,6 +1,6 @@
 #pragma once
 // NativeClassBuilder<T> — fluent API for registering a C++ struct/class as a
-// SimpleScript class.
+// IkigaiScript class.
 //
 // Usage:
 //   #include "Library/native/native_class_builder.hpp"

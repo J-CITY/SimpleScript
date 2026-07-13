@@ -1,8 +1,8 @@
-# SimpleScript (IkigaiScript)
+# IkigaiScript (IkigaiScript)
 
 > **English:** [README.md](README.md)
 
-SimpleScript — встраиваемый скриптовый язык на C++20 с статической типизацией, классами, корутинами, модулями и двойной архитектурой исполнения: **интерпретатор AST** (по умолчанию) и **стековая VM с байткодом**.
+IkigaiScript — встраиваемый скриптовый язык на C++20 с статической типизацией, классами, корутинами, модулями и двойной архитектурой исполнения: **интерпретатор AST** (по умолчанию) и **стековая VM с байткодом**.
 
 Полная справка по синтаксису: [docs/LANGUAGE.ru.md](docs/LANGUAGE.ru.md).
 
@@ -11,12 +11,12 @@ SimpleScript — встраиваемый скриптовый язык на C++
 ### Сборка (Windows / CMake)
 
 ```powershell
-cd SimpleScript
+cd IkigaiScript
 mkdir build
 cd build
 cmake ..
-cmake --build . --config Debug --target SimpleScriptTests
-.\Debug\SimpleScriptTests.exe
+cmake --build . --config Debug --target IkigaiScriptTests
+.\Debug\IkigaiScriptTests.exe
 ```
 
 ### Запуск скрипта из C++
@@ -26,7 +26,7 @@ cmake --build . --config Debug --target SimpleScriptTests
 
 IkigaiScript::IkigaiScriptInterpreter interp;
 interp.evaluate(R"(
-    var msg = "Hello, SimpleScript!";
+    var msg = "Hello, IkigaiScript!";
     print(msg);
 )");
 ```
@@ -34,13 +34,13 @@ interp.evaluate(R"(
 ### Запуск файла
 
 ```cpp
-interp.evaluateFile("script.ss");
+interp.evaluateFile("script.ik");
 ```
 
 ## Пример: «Hello World»
 
 ```js
-print("Hello, SimpleScript!");
+print("Hello, IkigaiScript!");
 ```
 
 ## Основные возможности
@@ -161,13 +161,13 @@ var result = await t;
 ### Модули
 
 ```js
-// math.ss
+// math.ik
 module Math;
 export fun add(a, b) { return a + b; }
 export var PI = 3.14;
 
-// main.ss
-import "math.ss";
+// main.ik
+import "math.ik";
 print(Math.add(2, 3));
 using { add } from Math;
 ```
@@ -242,9 +242,9 @@ interp.runCompiledScriptFile("script.ikbc");
 
 | Путь | Описание |
 |------|----------|
-| `SimpleScript/Library/` | Ядро: парсер, интерпретатор, VM, байткод |
-| `SimpleScript/Tests/` | Тесты Catch2 (~480+ кейсов) |
-| `SimpleScript/VisualEditor/` | Визуальный редактор (опционально, требует GLFW) |
+| `IkigaiScript/Library/` | Ядро: парсер, интерпретатор, VM, байткод |
+| `IkigaiScript/Tests/` | Тесты Catch2 (~480+ кейсов) |
+| `IkigaiScript/VisualEditor/` | Визуальный редактор (опционально, требует GLFW) |
 | `docs/LANGUAGE.md` | Документация по языку (English) |
 | `docs/LANGUAGE.ru.md` | Документация по языку (Русский) |
 | `.agents/skills/architecture/SKILL.md` | Архитектурные правила для разработчиков |
@@ -252,10 +252,10 @@ interp.runCompiledScriptFile("script.ikbc");
 ## Тесты
 
 ```powershell
-cd SimpleScript\build\Debug
-.\SimpleScriptTests.exe                    # все тесты
-.\SimpleScriptTests.exe "[bytecode]"       # только байткод
-.\SimpleScriptTests.exe "[coroutines]"     # корутины
+cd IkigaiScript\build\Debug
+.\IkigaiScriptTests.exe                    # все тесты
+.\IkigaiScriptTests.exe "[bytecode]"       # только байткод
+.\IkigaiScriptTests.exe "[coroutines]"     # корутины
 ```
 
 ## Лицензия

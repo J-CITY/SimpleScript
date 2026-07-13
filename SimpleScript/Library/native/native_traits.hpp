@@ -1,5 +1,5 @@
 #pragma once
-// Type-marshaling traits for native C++ ↔ SimpleScript Value conversion.
+// Type-marshaling traits for native C++ ↔ IkigaiScript Value conversion.
 // Specialize NativeTraits<T> to teach the builder how to convert your types.
 
 #include "../types.hpp"

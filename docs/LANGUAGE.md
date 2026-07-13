@@ -1,8 +1,8 @@
-# SimpleScript — Language Reference
+# IkigaiScript — Language Reference
 
 > **Русский:** [LANGUAGE.ru.md](LANGUAGE.ru.md)
 
-SimpleScript (engine name: **IkigaiScript**) is an imperative scripting language with expressions, first-class functions, OOP, coroutines, and static typing with optional `dynamic`.
+IkigaiScript (engine name: **IkigaiScript**) is an imperative scripting language with expressions, first-class functions, OOP, coroutines, and static typing with optional `dynamic`.
 
 ---
 
@@ -529,7 +529,7 @@ interp.pump(maxSteps);  // run ready tasks
 
 ### Module definition
 
-File `math.ss`:
+File `math.ik`:
 
 ```js
 module Math;
@@ -543,7 +543,7 @@ fun helper() { return 100; }  // not exported
 ### Import
 
 ```js
-import "path/to/math.ss";
+import "path/to/math.ik";
 print(Math.add(2, 3));
 print(Math.PI);
 ```
@@ -709,7 +709,7 @@ IkigaiScript::IkigaiScriptInterpreter interp;
 
 // Execution
 interp.evaluate("var x = 1;");
-interp.evaluateFile("script.ss");
+interp.evaluateFile("script.ik");
 
 // Read variables
 auto val = interp.resolveVariable("x");
@@ -741,7 +741,7 @@ auto chunk = interp.compileScript(R"(
 ```
 
 ```cpp
-auto chunk = interp.compileScriptFile("script.ss");
+auto chunk = interp.compileScriptFile("script.ik");
 ```
 
 ### Serialization (IKBC v1 format)
@@ -780,7 +780,7 @@ interp.runCompiledScriptString(blob);
 | Tuple patterns in `match` | planned |
 | Destructuring in function parameters | planned |
 | Full module serialization in IKBC | not supported |
-| GUI (`SimpleScriptApp`) | requires GLFW/OpenGL |
+| GUI (`IkigaiScriptApp`) | requires GLFW/OpenGL |
 
 Current task list: [ARCHITECTURE_PLAN.md](../ARCHITECTURE_PLAN.md).
 
@@ -791,4 +791,4 @@ Current task list: [ARCHITECTURE_PLAN.md](../ARCHITECTURE_PLAN.md).
 - [README.md](../README.md) — overview and quick start
 - [README.ru.md](../README.ru.md) — обзор (Русский)
 - [`.agents/skills/architecture/SKILL.md`](../.agents/skills/architecture/SKILL.md) — engine architecture
-- `SimpleScript/Tests/` — executable language specification (Catch2)
+- `IkigaiScript/Tests/` — executable language specification (Catch2)

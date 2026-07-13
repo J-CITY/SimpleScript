@@ -13,14 +13,14 @@ void interpret() {
 
 int main(int argc, char** argv) {
 	if (argc == 1) {
-		std::cout << "SimpleScript Interpreter:\n";
+		std::cout << "IkigaiScript Interpreter:\n";
 		interpret();
 	}
 	else if (argc == 2) {
 		return interp.evaluateFile(std::string(argv[1]));
 	}
 	else {
-		std::cout << "Usage: \n\tSimpleScript -> Starts Interpreter\n\tSimpleScript [filepath] -> Execute Script File\n";
+		std::cout << "Usage: \n\tIkigaiScript -> Starts Interpreter\n\tIkigaiScript [filepath] -> Execute Script File\n";
 	}
 	return 0;
 }

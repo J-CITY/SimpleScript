@@ -1,8 +1,8 @@
-# SimpleScript — документация по языку
+# IkigaiScript — документация по языку
 
 > **English:** [LANGUAGE.md](LANGUAGE.md)
 
-SimpleScript (внутреннее имя движка: **IkigaiScript**) — императивный скриптовый язык с выражениями, функциями первого класса, ООП, корутинами и статической типизацией с опциональным `dynamic`.
+IkigaiScript (внутреннее имя движка: **IkigaiScript**) — императивный скриптовый язык с выражениями, функциями первого класса, ООП, корутинами и статической типизацией с опциональным `dynamic`.
 
 ---
 
@@ -529,7 +529,7 @@ interp.pump(maxSteps);  // выполнить готовые задачи
 
 ### Определение модуля
 
-Файл `math.ss`:
+Файл `math.ik`:
 
 ```js
 module Math;
@@ -543,7 +543,7 @@ fun helper() { return 100; }  // не экспортируется
 ### Импорт
 
 ```js
-import "path/to/math.ss";
+import "path/to/math.ik";
 print(Math.add(2, 3));
 print(Math.PI);
 ```
@@ -709,7 +709,7 @@ IkigaiScript::IkigaiScriptInterpreter interp;
 
 // Выполнение
 interp.evaluate("var x = 1;");
-interp.evaluateFile("script.ss");
+interp.evaluateFile("script.ik");
 
 // Чтение переменных
 auto val = interp.resolveVariable("x");
@@ -741,7 +741,7 @@ auto chunk = interp.compileScript(R"(
 ```
 
 ```cpp
-auto chunk = interp.compileScriptFile("script.ss");
+auto chunk = interp.compileScriptFile("script.ik");
 ```
 
 ### Сериализация (формат IKBC v1)
@@ -780,7 +780,7 @@ interp.runCompiledScriptString(blob);
 | Tuple-паттерны в `match` | в планах |
 | Destructuring в параметрах функций | в планах |
 | Полная сериализация модулей в IKBC | нет |
-| GUI (`SimpleScriptApp`) | требует GLFW/OpenGL |
+| GUI (`IkigaiScriptApp`) | требует GLFW/OpenGL |
 
 Актуальный список задач: [ARCHITECTURE_PLAN.md](../ARCHITECTURE_PLAN.md).
 
@@ -791,4 +791,4 @@ interp.runCompiledScriptString(blob);
 - [README.ru.md](../README.ru.md) — обзор и быстрый старт
 - [README.md](../README.md) — overview (English)
 - [`.agents/skills/architecture/SKILL.md`](../.agents/skills/architecture/SKILL.md) — архитектура движка
-- `SimpleScript/Tests/` — исполняемая спецификация языка (Catch2)
+- `IkigaiScript/Tests/` — исполняемая спецификация языка (Catch2)

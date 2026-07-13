@@ -1,8 +1,8 @@
-# SimpleScript (IkigaiScript)
+# IkigaiScript (IkigaiScript)
 
 > **Русский:** [README.ru.md](README.ru.md)
 
-SimpleScript is an embeddable C++20 scripting language with static typing, classes, coroutines, modules, and a dual execution architecture: an **AST interpreter** (default) and a **stack-based bytecode VM**.
+IkigaiScript is an embeddable C++20 scripting language with static typing, classes, coroutines, modules, and a dual execution architecture: an **AST interpreter** (default) and a **stack-based bytecode VM**.
 
 Full language reference: [docs/LANGUAGE.md](docs/LANGUAGE.md).
 
@@ -11,12 +11,12 @@ Full language reference: [docs/LANGUAGE.md](docs/LANGUAGE.md).
 ### Build (Windows / CMake)
 
 ```powershell
-cd SimpleScript
+cd IkigaiScript
 mkdir build
 cd build
 cmake ..
-cmake --build . --config Debug --target SimpleScriptTests
-.\Debug\SimpleScriptTests.exe
+cmake --build . --config Debug --target IkigaiScriptTests
+.\Debug\IkigaiScriptTests.exe
 ```
 
 ### Run a script from C++
@@ -26,7 +26,7 @@ cmake --build . --config Debug --target SimpleScriptTests
 
 IkigaiScript::IkigaiScriptInterpreter interp;
 interp.evaluate(R"(
-    var msg = "Hello, SimpleScript!";
+    var msg = "Hello, IkigaiScript!";
     print(msg);
 )");
 ```
@@ -34,13 +34,13 @@ interp.evaluate(R"(
 ### Run a file
 
 ```cpp
-interp.evaluateFile("script.ss");
+interp.evaluateFile("script.ik");
 ```
 
 ## Hello World
 
 ```js
-print("Hello, SimpleScript!");
+print("Hello, IkigaiScript!");
 ```
 
 ## Language highlights
@@ -161,13 +161,13 @@ See `sync`, `race`, and `spawn` in [docs/LANGUAGE.md](docs/LANGUAGE.md#concurren
 ### Modules
 
 ```js
-// math.ss
+// math.ik
 module Math;
 export fun add(a, b) { return a + b; }
 export var PI = 3.14;
 
-// main.ss
-import "math.ss";
+// main.ik
+import "math.ik";
 print(Math.add(2, 3));
 using { add } from Math;
 ```
@@ -242,9 +242,9 @@ Source → Lexer → Parser → AST
 
 | Path | Description |
 |------|-------------|
-| `SimpleScript/Library/` | Core: parser, interpreter, VM, bytecode |
-| `SimpleScript/Tests/` | Catch2 tests (~480+ cases) |
-| `SimpleScript/VisualEditor/` | Visual editor (optional, requires GLFW) |
+| `IkigaiScript/Library/` | Core: parser, interpreter, VM, bytecode |
+| `IkigaiScript/Tests/` | Catch2 tests (~480+ cases) |
+| `IkigaiScript/VisualEditor/` | Visual editor (optional, requires GLFW) |
 | `docs/LANGUAGE.md` | Language reference (English) |
 | `docs/LANGUAGE.ru.md` | Language reference (Russian) |
 | `.agents/skills/architecture/SKILL.md` | Architecture guidelines for contributors |
@@ -252,10 +252,10 @@ Source → Lexer → Parser → AST
 ## Tests
 
 ```powershell
-cd SimpleScript\build\Debug
-.\SimpleScriptTests.exe                    # all tests
-.\SimpleScriptTests.exe "[bytecode]"       # bytecode only
-.\SimpleScriptTests.exe "[coroutines]"     # coroutines
+cd IkigaiScript\build\Debug
+.\IkigaiScriptTests.exe                    # all tests
+.\IkigaiScriptTests.exe "[bytecode]"       # bytecode only
+.\IkigaiScriptTests.exe "[coroutines]"     # coroutines
 ```
 
 ## License

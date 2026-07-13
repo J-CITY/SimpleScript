@@ -15,7 +15,7 @@ namespace Visual {
         NodeType kind;
     };
 
-    // Maps blueprint node IDs ↔ line ranges in the generated .ss script.
+    // Maps blueprint node IDs ↔ line ranges in the generated .ik script.
     // Serialized as a single-line JSON comment at the top of the generated file so
     // the host can recover it without re-running the generator.
     struct BpSourceMap {

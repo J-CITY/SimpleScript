@@ -299,9 +299,9 @@ TEST_CASE("BC: compileScript does not run top-level code", "[bytecode][compile_i
 	REQUIRE(interp.__DEBUG_OUT__.empty());
 }
 
-TEST_CASE("BC: compileScriptFile compiles a .ss file", "[bytecode][compile_io]") {
+TEST_CASE("BC: compileScriptFile compiles a .ik file", "[bytecode][compile_io]") {
 	// Write a temp script file.
-	const std::string tmpPath = "test_compile_io_tmp.ss";
+	const std::string tmpPath = "test_compile_io_tmp.ik";
 	{
 		std::ofstream f(tmpPath);
 		f << "fun square(n: Int): Int { return n * n; };";
@@ -407,7 +407,7 @@ TEST_CASE("BC: runCompiledScript executes main chunk body", "[bytecode][compile_
 // Import compile path (Фаза 1)
 // ---------------------------------------------------------------------------
 
-// Helper: write a temp .ss file and return its path.
+// Helper: write a temp .ik file and return its path.
 static std::string writeTempSS(const std::string& filename, const std::string& content) {
 	auto p = fs::temp_directory_path() / filename;
 	std::ofstream f(p);
@@ -416,7 +416,7 @@ static std::string writeTempSS(const std::string& filename, const std::string& c
 }
 
 TEST_CASE("BC: compileScript with import — module functions compiled to bytecode", "[bytecode][compile_io][import]") {
-	auto modPath = writeTempSS("bc_mod_funcs.ss",
+	auto modPath = writeTempSS("bc_mod_funcs.ik",
 		"module BcMod;\n"
 		"export fun double(n: Int): Int { return n * 2; }\n"
 	);
@@ -443,7 +443,7 @@ TEST_CASE("BC: compileScript with import — module functions compiled to byteco
 }
 
 TEST_CASE("BC: compileScript with import — export var initialized during compile", "[bytecode][compile_io][import]") {
-	auto modPath = writeTempSS("bc_mod_var.ss",
+	auto modPath = writeTempSS("bc_mod_var.ik",
 		"module BcVarMod;\n"
 		"export var answer = 40 + 2;\n"
 	);
@@ -467,7 +467,7 @@ TEST_CASE("BC: compileScript with import — module stmts not in parent chunk ma
 	// Module top-level initialises a counter.  If the stmts leaked into the
 	// parent chunk->main they would run again on runCompiledScript and the
 	// counter would be 2.  It must be exactly 1 (init at compile time only).
-	auto modPath = writeTempSS("bc_mod_leak.ss",
+	auto modPath = writeTempSS("bc_mod_leak.ik",
 		"module BcLeak;\n"
 		"export var counter = 0;\n"
 		"counter = counter + 1;\n"
@@ -491,8 +491,8 @@ TEST_CASE("BC: compileScript with import — module stmts not in parent chunk ma
 }
 
 TEST_CASE("BC: compileScript with import — circular import still throws", "[bytecode][compile_io][import]") {
-	auto pathA = (fs::temp_directory_path() / "bc_circA.ss").generic_string();
-	auto pathB = (fs::temp_directory_path() / "bc_circB.ss").generic_string();
+	auto pathA = (fs::temp_directory_path() / "bc_circA.ik").generic_string();
+	auto pathB = (fs::temp_directory_path() / "bc_circB.ik").generic_string();
 	{
 		std::ofstream a(pathA);
 		a << "import \"" << pathB << "\";\nmodule BcCircA;\nexport var a = 1;\n";
