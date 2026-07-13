@@ -10,6 +10,8 @@ IkigaiScript — встраиваемый скриптовый язык на C++
 
 ### Сборка (Windows / CMake)
 
+По умолчанию собираются только **ядро + headless VisualCore + тесты** (без GUI-зависимостей):
+
 ```powershell
 cd IkigaiScript
 mkdir build
@@ -18,6 +20,28 @@ cmake ..
 cmake --build . --config Debug --target IkigaiScriptTests
 .\Debug\IkigaiScriptTests.exe
 ```
+
+### Окно визуального редактора (опционально)
+
+GUI-приложение (`IkigaiScriptApp`) **выключено по умолчанию**. Зависимости **не** git-сабмодули — укажите локальные пути в CMake.
+
+| Опция / путь CMake | Назначение |
+|--------------------|------------|
+| `IKIGAI_BUILD_VISUAL_EDITOR` | `ON` — собрать окно редактора (по умолчанию `OFF`) |
+| `IKIGAI_LIBS_ROOT` | Корень с `glfw` / `glew` (например `C:/libs`) |
+| `IKIGAI_IMGUI_DIR` | Дерево Dear ImGui (`imgui.h`, backends, `imgui-node-editor/`, `TextEditor.*`) |
+| `IKIGAI_GLFW_INCLUDE_DIR` / `IKIGAI_GLFW_LIB_DIR` | Явные пути к GLFW |
+| `IKIGAI_GLEW_INCLUDE_DIR` / `IKIGAI_GLEW_LIB_DIR` / `IKIGAI_GLEW_BIN_DIR` | Явные пути к GLEW |
+
+```powershell
+cmake .. -DIKIGAI_BUILD_VISUAL_EDITOR=ON `
+  -DIKIGAI_LIBS_ROOT=C:/libs `
+  -DIKIGAI_IMGUI_DIR=D:/path/to/imgui
+cmake --build . --config Release --target IkigaiScriptApp
+.\Release\IkigaiScriptApp.exe
+```
+
+`IKIGAI_LIBS_ROOT` задаёт дефолты для GLFW/GLEW (`glfw-3.4` или `glfw`, `glew`). Точные path-переменные их переопределяют.
 
 ### Запуск скрипта из C++
 
@@ -244,7 +268,7 @@ interp.runCompiledScriptFile("script.ikbc");
 |------|----------|
 | `IkigaiScript/Library/` | Ядро: парсер, интерпретатор, VM, байткод |
 | `IkigaiScript/Tests/` | Тесты Catch2 (~480+ кейсов) |
-| `IkigaiScript/VisualEditor/` | Визуальный редактор (опционально, требует GLFW) |
+| `IkigaiScript/VisualEditor/` | Ядро blueprint-графа + опциональный ImGui UI (`IKIGAI_BUILD_VISUAL_EDITOR`) |
 | `docs/LANGUAGE.md` | Документация по языку (English) |
 | `docs/LANGUAGE.ru.md` | Документация по языку (Русский) |
 | `.agents/skills/architecture/SKILL.md` | Архитектурные правила для разработчиков |

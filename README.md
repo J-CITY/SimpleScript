@@ -10,6 +10,8 @@ Full language reference: [docs/LANGUAGE.md](docs/LANGUAGE.md).
 
 ### Build (Windows / CMake)
 
+Default configure builds **core + headless VisualCore + tests** only (no GUI deps):
+
 ```powershell
 cd IkigaiScript
 mkdir build
@@ -18,6 +20,28 @@ cmake ..
 cmake --build . --config Debug --target IkigaiScriptTests
 .\Debug\IkigaiScriptTests.exe
 ```
+
+### Visual editor window (optional)
+
+The GUI app (`IkigaiScriptApp`) is **off by default**. Dependencies are **not** git submodules — point CMake at local trees.
+
+| CMake option / path | Meaning |
+|---------------------|---------|
+| `IKIGAI_BUILD_VISUAL_EDITOR` | `ON` to build the editor window (default `OFF`) |
+| `IKIGAI_LIBS_ROOT` | Root with `glfw` / `glew` (e.g. `C:/libs`) |
+| `IKIGAI_IMGUI_DIR` | Dear ImGui tree (`imgui.h`, backends, `imgui-node-editor/`, `TextEditor.*`) |
+| `IKIGAI_GLFW_INCLUDE_DIR` / `IKIGAI_GLFW_LIB_DIR` | Override GLFW paths |
+| `IKIGAI_GLEW_INCLUDE_DIR` / `IKIGAI_GLEW_LIB_DIR` / `IKIGAI_GLEW_BIN_DIR` | Override GLEW paths |
+
+```powershell
+cmake .. -DIKIGAI_BUILD_VISUAL_EDITOR=ON `
+  -DIKIGAI_LIBS_ROOT=C:/libs `
+  -DIKIGAI_IMGUI_DIR=D:/path/to/imgui
+cmake --build . --config Release --target IkigaiScriptApp
+.\Release\IkigaiScriptApp.exe
+```
+
+`IKIGAI_LIBS_ROOT` fills GLFW/GLEW defaults (`glfw-3.4` or `glfw`, `glew`). Fine-grained path variables override those defaults.
 
 ### Run a script from C++
 
@@ -244,7 +268,7 @@ Source → Lexer → Parser → AST
 |------|-------------|
 | `IkigaiScript/Library/` | Core: parser, interpreter, VM, bytecode |
 | `IkigaiScript/Tests/` | Catch2 tests (~480+ cases) |
-| `IkigaiScript/VisualEditor/` | Visual editor (optional, requires GLFW) |
+| `IkigaiScript/VisualEditor/` | Blueprint graph core + optional ImGui UI (`IKIGAI_BUILD_VISUAL_EDITOR`) |
 | `docs/LANGUAGE.md` | Language reference (English) |
 | `docs/LANGUAGE.ru.md` | Language reference (Russian) |
 | `.agents/skills/architecture/SKILL.md` | Architecture guidelines for contributors |
